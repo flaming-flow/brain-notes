@@ -3,12 +3,22 @@ import { Update, Start, Help, Command, Ctx } from 'nestjs-telegraf';
 import { Context, Markup } from 'telegraf';
 import { AuthGuard } from '../guards/auth.guard.js';
 import { MessageProcessorService } from '../services/message-processor.service.js';
+import { VaultReaderService } from '../../vault/vault-reader.service.js';
 import type { BotContext } from '../../shared/interfaces/session.interface.js';
+
+const CONTACTS_PER_PAGE = 8;
+
+const MAIN_KEYBOARD = Markup.keyboard([
+  ['+ Contact', 'Contacts', 'Music'],
+]).resize();
 
 @Update()
 @UseGuards(AuthGuard)
 export class CommandUpdate {
-  constructor(private readonly processor: MessageProcessorService) {}
+  constructor(
+    private readonly processor: MessageProcessorService,
+    private readonly reader: VaultReaderService,
+  ) {}
 
   @Start()
   async onStart(@Ctx() ctx: Context): Promise<void> {
@@ -22,19 +32,13 @@ export class CommandUpdate {
         '- Пересланное — сохраню с указанием источника\n' +
         '- Ссылки — сохраню как ресурс (несколько ссылок — батчем)\n' +
         '- Аудиофайл — транскрибирую\n\n' +
-        'Что создаю автоматически:\n' +
-        '- Заметки, идеи, размышления\n' +
-        '- Задачи и чеклисты (сохраняются сразу)\n' +
-        '- Контакты (распознаются по имени и контексту)\n' +
-        '- События (воркшопы, фестивали)\n' +
-        '- Музыкальные идеи\n' +
-        '- Проекты с целью и планом\n\n' +
         'Команды:\n' +
         '/contact Имя — создать карточку контакта\n' +
+        '/contacts — список всех контактов\n' +
         '/project Описание — создать проект\n' +
         '/music Описание — музыкальная заметка\n' +
-        '/music — режим записи (отправь аудио)\n' +
         '/help — подробная справка',
+      MAIN_KEYBOARD,
     );
   }
 
@@ -46,30 +50,17 @@ export class CommandUpdate {
         '2. AI классифицирует и предложит теги\n' +
         '3. Нажимай теги чтобы выбрать/убрать\n' +
         '4. Нажми Save для сохранения\n\n' +
-        'Типы заметок:\n' +
-        '- Заметка — мысли, идеи, наблюдения\n' +
-        '- Задача — "купить", "не забыть", "записаться"\n' +
-        '- Чеклист — несколько задач в одном сообщении\n' +
-        '- Контакт — "познакомился с Марией на танцах"\n' +
-        '- Событие — воркшоп, фестиваль, мастер-класс\n' +
-        '- Ссылка — URL на видео, статью, инструмент\n' +
-        '- Музыка — идея мелодии, бита, текст песни\n' +
-        '- Проект — цель + план действий + результат\n\n' +
-        'Автоматически:\n' +
-        '- Задачи и чеклисты сохраняются сразу (без выбора тегов)\n' +
-        '- Контакты распознаются AI и сохраняются в contacts/\n' +
-        '- Проекты сохраняются в projects/\n\n' +
-        'Фишки:\n' +
-        '- Ответь на сохранённую заметку — текст дополнится\n' +
-        '- Undo — 60 сек после сохранения можно отменить\n' +
-        '- Несколько ссылок в одном сообщении — сохранятся батчем\n' +
-        '- Голосовые команды: "добавь заметку...", "создай задачу..."\n\n' +
+        'Кнопки:\n' +
+        '+ Contact — быстрое создание контакта\n' +
+        'Contacts — список всех контактов\n\n' +
         'Команды:\n' +
-        '/contact Имя — визард создания контакта (телефон, соцсети, контекст)\n' +
-        '/project Описание — создать проект с целью и планом действий\n' +
-        '/music Описание — создать музыкальную заметку\n' +
-        '/music — режим записи: отправь аудио, добавь описание\n' +
+        '/contact Имя — визард создания контакта\n' +
+        '/contacts — список контактов с пагинацией\n' +
+        '/project Описание — создать проект\n' +
+        '/music Описание — музыкальная заметка\n' +
+        '/music — режим записи (отправь аудио)\n' +
         '/help — эта справка',
+      MAIN_KEYBOARD,
     );
   }
 
@@ -95,7 +86,6 @@ export class CommandUpdate {
     const description = text.replace(/^\/music\s*/i, '').trim();
 
     if (!description) {
-      // Enter music mode: await audio
       ctx.session ??= {} as BotContext['session'];
       ctx.session.pendingMusic = { awaitingAudio: true };
       await ctx.reply('Send audio for your music idea.');
@@ -113,7 +103,13 @@ export class CommandUpdate {
     const text = message?.text || '';
     const name = text.replace(/^\/contact\s*/i, '').trim();
     if (!name) {
-      await ctx.reply('Usage: /contact Name\nExample: /contact Maria Gonzalez');
+      await ctx.reply('Введи имя контакта:', Markup.forceReply());
+      ctx.session ??= {} as BotContext['session'];
+      ctx.session.pendingContact = {
+        step: 'name',
+        name: '',
+        platforms: {},
+      };
       return;
     }
 
@@ -129,5 +125,53 @@ export class CommandUpdate {
     ]);
 
     await ctx.reply(`Contact: ${name}\n\nPhone number?`, keyboard);
+  }
+
+  @Command('contacts')
+  async onContactsCommand(@Ctx() ctx: BotContext): Promise<void> {
+    await this.showContactsPage(ctx, 0);
+  }
+
+  async showContactsPage(ctx: BotContext, page: number, edit = false): Promise<void> {
+    const contacts = await this.reader.listContacts();
+
+    if (contacts.length === 0) {
+      const text = 'No contacts yet. Use /contact Name to create one.';
+      if (edit) {
+        await ctx.editMessageText(text);
+      } else {
+        await ctx.reply(text);
+      }
+      return;
+    }
+
+    const totalPages = Math.ceil(contacts.length / CONTACTS_PER_PAGE);
+    const safePage = Math.max(0, Math.min(page, totalPages - 1));
+    const pageContacts = contacts.slice(
+      safePage * CONTACTS_PER_PAGE,
+      (safePage + 1) * CONTACTS_PER_PAGE,
+    );
+
+    const buttons = pageContacts.map(c => [
+      Markup.button.callback(c.name, `view_contact:${c.fileName}`),
+    ]);
+
+    const navRow: ReturnType<typeof Markup.button.callback>[] = [];
+    if (safePage > 0) {
+      navRow.push(Markup.button.callback('« Prev', `contacts_page:${safePage - 1}`));
+    }
+    navRow.push(Markup.button.callback(`${safePage + 1}/${totalPages}`, 'noop'));
+    if (safePage < totalPages - 1) {
+      navRow.push(Markup.button.callback('Next »', `contacts_page:${safePage + 1}`));
+    }
+
+    const keyboard = Markup.inlineKeyboard([...buttons, navRow]);
+    const text = `Contacts (${contacts.length}):`;
+
+    if (edit) {
+      await ctx.editMessageText(text, keyboard);
+    } else {
+      await ctx.reply(text, keyboard);
+    }
   }
 }

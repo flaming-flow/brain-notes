@@ -5,6 +5,7 @@ import { AuthGuard } from '../guards/auth.guard.js';
 import { MessageProcessorService } from '../services/message-processor.service.js';
 import { VaultService } from '../../vault/vault.service.js';
 import { VaultWriterService } from '../../vault/vault-writer.service.js';
+import { CommandUpdate } from './command.update.js';
 import type { BotContext } from '../../shared/interfaces/session.interface.js';
 import type { ForwardMetadata } from '../../shared/interfaces/forward-metadata.interface.js';
 
@@ -17,6 +18,7 @@ export class TextUpdate {
     private readonly processor: MessageProcessorService,
     private readonly vault: VaultService,
     private readonly writer: VaultWriterService,
+    private readonly commandUpdate: CommandUpdate,
   ) {}
 
   @On('text')
@@ -25,6 +27,28 @@ export class TextUpdate {
     @Message('text') text: string,
   ): Promise<void> {
     if (text.startsWith('/')) return;
+
+    // Handle persistent keyboard buttons
+    if (text === '+ Contact') {
+      ctx.session ??= {} as BotContext['session'];
+      ctx.session.pendingContact = {
+        step: 'name',
+        name: '',
+        platforms: {},
+      };
+      await ctx.reply('Введи имя контакта:');
+      return;
+    }
+    if (text === 'Contacts') {
+      await this.commandUpdate.showContactsPage(ctx, 0);
+      return;
+    }
+    if (text === 'Music') {
+      ctx.session ??= {} as BotContext['session'];
+      ctx.session.pendingMusic = { awaitingAudio: true };
+      await ctx.reply('Send audio for your music idea.');
+      return;
+    }
 
     this.logger.log(`Received: "${text.slice(0, 50)}..."`);
 
@@ -129,6 +153,15 @@ export class TextUpdate {
     const input = text.trim();
 
     switch (contact.step) {
+      case 'name':
+        contact.name = input;
+        contact.step = 'phone';
+        await ctx.reply(
+          `Contact: ${input}\n\nPhone number?`,
+          Markup.inlineKeyboard([[Markup.button.callback('Skip', 'contact_skip')]]),
+        );
+        break;
+
       case 'phone':
         contact.phone = input;
         contact.step = 'platforms';
@@ -136,8 +169,7 @@ export class TextUpdate {
         break;
 
       case 'platform_handle': {
-        // User typed a handle for the current platform
-        const handle = input.startsWith('@') ? input : `@${input}`;
+        const handle = this.normalizeHandle(input, contact.currentPlatform);
         if (contact.currentPlatform) {
           contact.platforms[contact.currentPlatform] = handle;
         }
@@ -253,6 +285,20 @@ export class TextUpdate {
       this.logger.warn(`Failed to append: ${error}`);
       return false;
     }
+  }
+
+  private normalizeHandle(input: string, platform?: string): string {
+    // Extract username from URL
+    const igMatch = input.match(/(?:instagram\.com|instagr\.am)\/([a-zA-Z0-9_.]+)/i);
+    if (igMatch) return `@${igMatch[1]}`;
+
+    const tgMatch = input.match(/(?:t\.me|telegram\.me)\/([a-zA-Z0-9_]+)/i);
+    if (tgMatch) return `@${tgMatch[1]}`;
+
+    // Clean up: ensure @ prefix for usernames
+    const cleaned = input.trim().replace(/^https?:\/\//, '');
+    if (cleaned.startsWith('@')) return cleaned;
+    return `@${cleaned}`;
   }
 
   private extractForwardMeta(ctx: BotContext): ForwardMetadata | undefined {

@@ -14,7 +14,7 @@ export interface PendingNote {
 }
 
 export interface PendingContact {
-  step: 'phone' | 'platforms' | 'platform_handle' | 'context_city';
+  step: 'name' | 'phone' | 'platforms' | 'platform_handle' | 'context_city';
   name: string;
   phone?: string;
   platforms: Record<string, string>;

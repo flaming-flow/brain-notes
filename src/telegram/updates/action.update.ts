@@ -5,7 +5,9 @@ import { AuthGuard } from '../guards/auth.guard.js';
 import { MessageProcessorService } from '../services/message-processor.service.js';
 import { VaultService } from '../../vault/vault.service.js';
 import { VaultWriterService } from '../../vault/vault-writer.service.js';
+import { VaultReaderService } from '../../vault/vault-reader.service.js';
 import { TextUpdate } from './text.update.js';
+import { CommandUpdate } from './command.update.js';
 import type { BotContext } from '../../shared/interfaces/session.interface.js';
 
 @Update()
@@ -17,7 +19,9 @@ export class ActionUpdate {
     private readonly processor: MessageProcessorService,
     private readonly vault: VaultService,
     private readonly writer: VaultWriterService,
+    private readonly reader: VaultReaderService,
     private readonly textUpdate: TextUpdate,
+    private readonly commandUpdate: CommandUpdate,
   ) {}
 
   @Action(/^tag:(.+)$/)
@@ -206,6 +210,79 @@ export class ActionUpdate {
     };
 
     await this.processor.showTagKeyboard(ctx);
+  }
+
+  // --- Contacts list actions ---
+
+  @Action(/^contacts_page:(\d+)$/)
+  async onContactsPage(@Ctx() ctx: BotContext): Promise<void> {
+    const callbackData = (ctx.callbackQuery as { data?: string })?.data;
+    const page = parseInt(callbackData?.replace('contacts_page:', '') || '0', 10);
+    await ctx.answerCbQuery();
+    await this.commandUpdate.showContactsPage(ctx, page, true);
+  }
+
+  @Action(/^view_contact:(.+)$/)
+  async onViewContact(@Ctx() ctx: BotContext): Promise<void> {
+    const callbackData = (ctx.callbackQuery as { data?: string })?.data;
+    const fileName = callbackData?.replace('view_contact:', '');
+    if (!fileName) return;
+
+    await ctx.answerCbQuery();
+
+    const content = await this.reader.readContact(fileName);
+    if (!content) {
+      await ctx.editMessageText('Contact not found.');
+      return;
+    }
+
+    const display = this.formatContactDisplay(content, fileName);
+
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('« Back to contacts', 'contacts_page:0')],
+    ]);
+
+    const truncated = display.length > 3500
+      ? display.slice(0, 3500) + '\n\n... (truncated)'
+      : display;
+
+    await ctx.editMessageText(truncated, { ...keyboard, parse_mode: 'Markdown' });
+  }
+
+  private formatContactDisplay(content: string, fileName: string): string {
+    const lines: string[] = [];
+
+    // Extract frontmatter fields
+    const name = content.match(/^name:\s*"?(.+?)"?\s*$/m)?.[1] || fileName;
+    const phone = content.match(/^phone:\s*"?(.+?)"?\s*$/m)?.[1];
+    const cityMet = content.match(/^city_met:\s*"?(.+?)"?\s*$/m)?.[1];
+    const dateMet = content.match(/^date_met:\s*(.+)$/m)?.[1];
+    const context = content.match(/^context:\s*"?(.+?)"?\s*$/m)?.[1];
+    const tags = content.match(/^tags:\s*\[(.+)\]$/m)?.[1];
+
+    lines.push(`*${name}*`);
+    if (phone) lines.push(`Phone: ${phone}`);
+    if (cityMet) lines.push(`Met in: ${cityMet}`);
+    if (dateMet) lines.push(`Date: ${dateMet}`);
+    if (context) lines.push(`Context: ${context}`);
+    if (tags) lines.push(`Tags: ${tags}`);
+
+    // Extract body (after second ---)
+    const secondDash = content.indexOf('---', 4);
+    if (secondDash > 0) {
+      const body = content.slice(secondDash + 3).trim();
+      if (body) {
+        lines.push('');
+        lines.push(body);
+      }
+    }
+
+    return lines.join('\n');
+  }
+
+  @Action('noop')
+  async onNoop(@Ctx() ctx: BotContext): Promise<void> {
+    await ctx.answerCbQuery();
   }
 
   // --- Voice transcription actions ---

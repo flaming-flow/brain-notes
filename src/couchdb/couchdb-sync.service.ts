@@ -139,6 +139,35 @@ export class CouchDBSyncService implements OnModuleInit {
     return { metaId: filePath, leafId };
   }
 
+  async readFile(filePath: string): Promise<string | null> {
+    const meta = await this.getDoc<LiveSyncMetaDoc>(filePath);
+    if (!meta) return null;
+
+    const chunks: string[] = [];
+    for (const childId of meta.children) {
+      const leaf = await this.getDoc<LiveSyncLeafDoc>(childId);
+      if (!leaf) {
+        this.logger.warn(`Missing chunk ${childId} for ${filePath}`);
+        return null;
+      }
+      chunks.push(leaf.data);
+    }
+    return chunks.join('');
+  }
+
+  async listByPrefix(prefix: string): Promise<string[]> {
+    const url = `${this.baseUrl}/_all_docs?` +
+      `startkey=${encodeURIComponent(JSON.stringify(prefix))}` +
+      `&endkey=${encodeURIComponent(JSON.stringify(prefix + '\ufff0'))}`;
+    const res = await fetch(url, { headers: this.headers });
+    if (!res.ok) return [];
+
+    const data = (await res.json()) as {
+      rows: Array<{ id: string }>;
+    };
+    return data.rows.map(r => r.id);
+  }
+
   async deleteFile(filePath: string): Promise<void> {
     const meta = await this.getDoc<LiveSyncMetaDoc>(filePath);
     if (meta?._rev) {
