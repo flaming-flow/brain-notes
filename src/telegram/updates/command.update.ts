@@ -121,7 +121,10 @@ export class CommandUpdate {
     };
 
     const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback('Skip', 'contact_skip')],
+      [
+        Markup.button.callback('Skip', 'contact_skip'),
+        Markup.button.callback('Cancel', 'cancel'),
+      ],
     ]);
 
     await ctx.reply(`Contact: ${name}\n\nPhone number?`, keyboard);

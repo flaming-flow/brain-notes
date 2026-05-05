@@ -120,6 +120,7 @@ export class MessageProcessorService {
       [
         Markup.button.callback('+ Add tag', 'add_tag'),
         Markup.button.callback('Save', 'save_note'),
+        Markup.button.callback('Cancel', 'cancel'),
       ],
     ]);
 

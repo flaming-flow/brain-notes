@@ -3,6 +3,7 @@ import { Update, Action, Ctx } from 'nestjs-telegraf';
 import { Markup } from 'telegraf';
 import { AuthGuard } from '../guards/auth.guard.js';
 import { MessageProcessorService } from '../services/message-processor.service.js';
+import { AiService } from '../../ai/ai.service.js';
 import { VaultService } from '../../vault/vault.service.js';
 import { VaultWriterService } from '../../vault/vault-writer.service.js';
 import { VaultReaderService } from '../../vault/vault-reader.service.js';
@@ -17,6 +18,7 @@ export class ActionUpdate {
 
   constructor(
     private readonly processor: MessageProcessorService,
+    private readonly ai: AiService,
     private readonly vault: VaultService,
     private readonly writer: VaultWriterService,
     private readonly reader: VaultReaderService,
@@ -175,9 +177,26 @@ export class ActionUpdate {
 
     contact.step = 'context_city';
     const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback('Skip', 'contact_skip')],
+      [
+        Markup.button.callback('Skip', 'contact_skip'),
+        Markup.button.callback('Cancel', 'cancel'),
+      ],
     ]);
     await ctx.reply('Where/how met? (e.g. "Bali, ecstatic dance")', keyboard);
+  }
+
+  // --- Cancel action (works for notes, contacts, voice, music) ---
+
+  @Action('cancel')
+  async onCancel(@Ctx() ctx: BotContext): Promise<void> {
+    if (ctx.session) {
+      ctx.session.pendingNote = undefined;
+      ctx.session.pendingContact = undefined;
+      ctx.session.pendingVoice = undefined;
+      ctx.session.pendingMusic = undefined;
+    }
+    await ctx.answerCbQuery('Cancelled');
+    await ctx.editMessageText('Cancelled.');
   }
 
   // --- Music actions ---
@@ -302,6 +321,39 @@ export class ActionUpdate {
       sourceType: 'voice',
       hintEntityType,
     });
+  }
+
+  @Action('voice_polish')
+  async onVoicePolish(@Ctx() ctx: BotContext): Promise<void> {
+    const pending = ctx.session?.pendingVoice;
+    if (!pending) return;
+
+    await ctx.answerCbQuery('Polishing...');
+    await ctx.editMessageText(`Polishing...\n"${pending.text}"`);
+
+    try {
+      const polished = await this.ai.polish(pending.text);
+      pending.text = polished;
+
+      const keyboard = Markup.inlineKeyboard([
+        [
+          Markup.button.callback('OK', 'voice_ok'),
+          Markup.button.callback('Edit', 'voice_edit'),
+        ],
+      ]);
+
+      await ctx.editMessageText(`Polished:\n"${polished}"`, keyboard);
+    } catch (err) {
+      this.logger.error(`Polish failed: ${err}`);
+      const keyboard = Markup.inlineKeyboard([
+        [
+          Markup.button.callback('OK', 'voice_ok'),
+          Markup.button.callback('Polish', 'voice_polish'),
+          Markup.button.callback('Edit', 'voice_edit'),
+        ],
+      ]);
+      await ctx.editMessageText(`Polish failed\n"${pending.text}"`, keyboard);
+    }
   }
 
   @Action('voice_edit')

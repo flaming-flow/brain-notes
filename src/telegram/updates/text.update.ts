@@ -240,7 +240,10 @@ export class TextUpdate {
 
     const keyboard = Markup.inlineKeyboard([
       ...buttonRows,
-      [Markup.button.callback('Done >', 'contact_done')],
+      [
+        Markup.button.callback('Done >', 'contact_done'),
+        Markup.button.callback('Cancel', 'cancel'),
+      ],
     ]);
 
     await ctx.reply(`${lines.join('\n')}\n\nAdd socials:`, keyboard);

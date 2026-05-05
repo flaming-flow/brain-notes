@@ -103,6 +103,30 @@ export class AiService {
     }
   }
 
+  async polish(text: string): Promise<string> {
+    const response = await this.openai.chat.completions.create({
+      model: this.model,
+      messages: [
+        {
+          role: 'system',
+          content:
+            'You are a text editor. Clean up the transcribed speech:\n' +
+            '- Remove filler words (типа, короче, ну, как бы, вот, это самое, блин, в общем, то есть)\n' +
+            '- Fix grammar and punctuation\n' +
+            '- Keep the original meaning and tone\n' +
+            '- Keep the same language (Russian/English)\n' +
+            '- Do NOT add new information or change the meaning\n' +
+            '- Do NOT add any commentary, just return the cleaned text',
+        },
+        { role: 'user', content: text },
+      ],
+      max_tokens: 1000,
+      temperature: 0.3,
+    });
+
+    return response.choices[0]?.message?.content?.trim() || text;
+  }
+
   private fallback(text: string): ClassificationResult {
     const title = text.replace(/https?:\/\/\S+/g, '').trim().slice(0, 40) || 'untitled';
     return {

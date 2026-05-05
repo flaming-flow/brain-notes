@@ -127,6 +127,7 @@ export class VoiceUpdate {
     const keyboard = Markup.inlineKeyboard([
       [
         Markup.button.callback('OK', 'voice_ok'),
+        Markup.button.callback('Polish', 'voice_polish'),
         Markup.button.callback('Edit', 'voice_edit'),
       ],
     ]);
