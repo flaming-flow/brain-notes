@@ -4,12 +4,14 @@ import { Context, Markup } from 'telegraf';
 import { AuthGuard } from '../guards/auth.guard.js';
 import { MessageProcessorService } from '../services/message-processor.service.js';
 import { VaultReaderService } from '../../vault/vault-reader.service.js';
+import { CouchDBSyncService } from '../../couchdb/couchdb-sync.service.js';
 import type { BotContext } from '../../shared/interfaces/session.interface.js';
 
 const CONTACTS_PER_PAGE = 8;
 
 const MAIN_KEYBOARD = Markup.keyboard([
   ['+ Contact', 'Contacts', 'Music'],
+  [Markup.button.locationRequest('Send Location')],
 ]).resize();
 
 @Update()
@@ -18,6 +20,7 @@ export class CommandUpdate {
   constructor(
     private readonly processor: MessageProcessorService,
     private readonly reader: VaultReaderService,
+    private readonly couchSync: CouchDBSyncService,
   ) {}
 
   @Start()
@@ -133,6 +136,33 @@ export class CommandUpdate {
   @Command('contacts')
   async onContactsCommand(@Ctx() ctx: BotContext): Promise<void> {
     await this.showContactsPage(ctx, 0);
+  }
+
+  @Command('search')
+  async onSearchCommand(@Ctx() ctx: BotContext): Promise<void> {
+    const message = ctx.message as unknown as { text?: string };
+    const text = message?.text || '';
+    const query = text.replace(/^\/search\s*/i, '').trim();
+    if (!query) {
+      await ctx.reply('Usage: /search keyword');
+      return;
+    }
+
+    await ctx.reply('Searching...');
+    const results = await this.couchSync.searchByContent(query, 10);
+
+    if (results.length === 0) {
+      await ctx.reply(`No results for "${query}"`);
+      return;
+    }
+
+    const buttons = results.map((r) => {
+      const label = r.id.replace('.md', '').replace(/^[^/]+\//, '');
+      return [Markup.button.callback(label.slice(0, 60), `view_note:${r.id}`)];
+    });
+
+    const keyboard = Markup.inlineKeyboard(buttons);
+    await ctx.reply(`Found ${results.length} result(s) for "${query}":`, keyboard);
   }
 
   async showContactsPage(ctx: BotContext, page: number, edit = false): Promise<void> {

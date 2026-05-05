@@ -7,6 +7,7 @@ import { AiService } from '../../ai/ai.service.js';
 import { VaultService } from '../../vault/vault.service.js';
 import { VaultWriterService } from '../../vault/vault-writer.service.js';
 import { VaultReaderService } from '../../vault/vault-reader.service.js';
+import { CouchDBSyncService } from '../../couchdb/couchdb-sync.service.js';
 import { TextUpdate } from './text.update.js';
 import { CommandUpdate } from './command.update.js';
 import type { BotContext } from '../../shared/interfaces/session.interface.js';
@@ -22,6 +23,7 @@ export class ActionUpdate {
     private readonly vault: VaultService,
     private readonly writer: VaultWriterService,
     private readonly reader: VaultReaderService,
+    private readonly couchSync: CouchDBSyncService,
     private readonly textUpdate: TextUpdate,
     private readonly commandUpdate: CommandUpdate,
   ) {}
@@ -92,6 +94,7 @@ export class ActionUpdate {
         pending.url,
         pending.forwardMeta,
         pending.imageFileName,
+        ctx.session?.lastLocation,
       );
 
       const fileName = filePath.split('/').pop()?.replace('.md', '') || filePath;
@@ -194,6 +197,111 @@ export class ActionUpdate {
     await ctx.reply('Where/how met? (e.g. "Bali, ecstatic dance")', keyboard);
   }
 
+  // --- Edit actions (append/replace on reply) ---
+
+  @Action('edit_append')
+  async onEditAppend(@Ctx() ctx: BotContext): Promise<void> {
+    const pending = ctx.session?.pendingEdit;
+    if (!pending) return;
+
+    await ctx.answerCbQuery();
+    try {
+      await this.writer.appendToFile(pending.filePath, pending.text);
+      ctx.session.pendingEdit = undefined;
+      await ctx.editMessageText(`Appended to: ${pending.fileName}`);
+    } catch (err) {
+      this.logger.error(`Append failed: ${err}`);
+      await ctx.editMessageText('Append failed.');
+    }
+  }
+
+  @Action('edit_replace')
+  async onEditReplace(@Ctx() ctx: BotContext): Promise<void> {
+    const pending = ctx.session?.pendingEdit;
+    if (!pending) return;
+
+    await ctx.answerCbQuery();
+    try {
+      // Read existing file, keep frontmatter, replace body
+      const existing = await this.couchSync.readFile(pending.filePath);
+      if (!existing) {
+        await ctx.editMessageText('Note not found.');
+        return;
+      }
+
+      const fmMatch = existing.match(/^(---\n[\s\S]*?\n---\n)/);
+      const frontmatter = fmMatch?.[1] || '';
+      const newContent = frontmatter + '\n' + pending.text + '\n';
+
+      await this.couchSync.writeFile(pending.filePath, newContent);
+      ctx.session.pendingEdit = undefined;
+      await ctx.editMessageText(`Replaced body of: ${pending.fileName}`);
+    } catch (err) {
+      this.logger.error(`Replace failed: ${err}`);
+      await ctx.editMessageText('Replace failed.');
+    }
+  }
+
+  // --- Search result view ---
+
+  @Action(/^view_note:(.+)$/)
+  async onViewNote(@Ctx() ctx: BotContext): Promise<void> {
+    const callbackData = (ctx.callbackQuery as { data?: string })?.data;
+    const docId = callbackData?.replace('view_note:', '');
+    if (!docId) return;
+
+    await ctx.answerCbQuery();
+
+    const content = await this.couchSync.readFile(docId);
+    if (!content) {
+      await ctx.editMessageText('Note not found.');
+      return;
+    }
+
+    const bodyMatch = content.match(/^---\n[\s\S]*?\n---\n([\s\S]*)$/);
+    const body = bodyMatch?.[1]?.trim() || content;
+    const title = docId.replace('.md', '').replace(/^[^/]+\//, '');
+
+    const display = body.length > 3500
+      ? body.slice(0, 3500) + '\n\n... (truncated)'
+      : body;
+
+    // Store for edit
+    ctx.session ??= {} as BotContext['session'];
+    ctx.session.lastSave = {
+      filePath: docId,
+      folder: docId.split('/')[0] || 'inbox',
+      fileName: title,
+      timestamp: Date.now(),
+    };
+
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('Edit', `edit_note:${docId}`)],
+    ]);
+
+    await ctx.editMessageText(`*${title}*\n\n${display}`, { ...keyboard, parse_mode: 'Markdown' });
+  }
+
+  @Action(/^edit_note:(.+)$/)
+  async onEditNote(@Ctx() ctx: BotContext): Promise<void> {
+    const callbackData = (ctx.callbackQuery as { data?: string })?.data;
+    const docId = callbackData?.replace('edit_note:', '');
+    if (!docId) return;
+
+    await ctx.answerCbQuery();
+
+    const fileName = docId.replace('.md', '').replace(/^[^/]+\//, '');
+    ctx.session ??= {} as BotContext['session'];
+    ctx.session.lastSave = {
+      filePath: docId,
+      folder: docId.split('/')[0] || 'inbox',
+      fileName,
+      timestamp: Date.now(),
+    };
+
+    await ctx.editMessageText(`Editing: ${fileName}\n\nSend new text:`);
+  }
+
   // --- Cancel action (works for notes, contacts, voice, music) ---
 
   @Action('cancel')
@@ -203,6 +311,7 @@ export class ActionUpdate {
       ctx.session.pendingContact = undefined;
       ctx.session.pendingVoice = undefined;
       ctx.session.pendingMusic = undefined;
+      ctx.session.pendingEdit = undefined;
     }
     await ctx.answerCbQuery('Cancelled');
     await ctx.editMessageText('Cancelled.');

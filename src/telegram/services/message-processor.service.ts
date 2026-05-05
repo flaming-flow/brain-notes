@@ -62,6 +62,8 @@ export class MessageProcessorService {
         classification,
         url,
         options.forwardMeta,
+        undefined,
+        ctx.session?.lastLocation,
       );
       const fileName =
         filePath.split('/').pop()?.replace('.md', '') || filePath;
@@ -70,7 +72,6 @@ export class MessageProcessorService {
         classification.entityType === 'task_list'
           ? `task_list (${itemCount || '?'} items)`
           : 'task';
-      await ctx.reply(`Saved: ${fileName}\nType: ${typeLabel}`);
       this.storeLastSave(
         ctx,
         filePath,
@@ -78,6 +79,10 @@ export class MessageProcessorService {
         fileName,
         classification.lifeArea,
       );
+      const undoKeyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('Undo (60s)', 'undo_save')],
+      ]);
+      await ctx.reply(`Saved: ${fileName}\nType: ${typeLabel}`, undoKeyboard);
       return;
     }
 
@@ -85,6 +90,7 @@ export class MessageProcessorService {
       const filePath = await this.vault.createContact(
         classification.contactData,
         classification.suggestedTags,
+        ctx.session?.lastLocation,
       );
       const fileName =
         filePath.split('/').pop()?.replace('.md', '') || filePath;
@@ -199,6 +205,8 @@ export class MessageProcessorService {
         singleClassification,
         url,
         options.forwardMeta,
+        undefined,
+        ctx.session?.lastLocation,
       );
       const fileName =
         filePath.split('/').pop()?.replace('.md', '') || filePath;

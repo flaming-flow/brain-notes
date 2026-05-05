@@ -143,6 +143,11 @@ export class CouchDBSyncService implements OnModuleInit {
     const meta = await this.getDoc<LiveSyncMetaDoc>(filePath);
     if (!meta) return null;
 
+    if (!Array.isArray(meta.children) || meta.children.length === 0) {
+      // Doc exists but has no children (different format or empty)
+      return null;
+    }
+
     const chunks: string[] = [];
     for (const childId of meta.children) {
       const leaf = await this.getDoc<LiveSyncLeafDoc>(childId);
@@ -166,6 +171,39 @@ export class CouchDBSyncService implements OnModuleInit {
       rows: Array<{ id: string }>;
     };
     return data.rows.map(r => r.id);
+  }
+
+  async searchByContent(query: string, limit = 20): Promise<Array<{ id: string; snippet: string }>> {
+    const allIds = await this.listByPrefix('');
+    const results: Array<{ id: string; snippet: string }> = [];
+    const lowerQuery = query.toLowerCase();
+
+    for (const id of allIds) {
+      if (id.startsWith('h:') || id.startsWith('_')) continue;
+      if (!id.endsWith('.md')) continue;
+      if (results.length >= limit) break;
+
+      try {
+        const content = await this.readFile(id);
+        if (!content) continue;
+
+        const lowerContent = content.toLowerCase();
+        const idx = lowerContent.indexOf(lowerQuery);
+        if (idx === -1) continue;
+
+        const start = Math.max(0, idx - 40);
+        const end = Math.min(content.length, idx + query.length + 40);
+        const snippet = (start > 0 ? '...' : '') +
+          content.slice(start, end).replace(/\n/g, ' ') +
+          (end < content.length ? '...' : '');
+
+        results.push({ id, snippet });
+      } catch {
+        // Skip unreadable docs
+      }
+    }
+
+    return results;
   }
 
   async deleteFile(filePath: string): Promise<void> {

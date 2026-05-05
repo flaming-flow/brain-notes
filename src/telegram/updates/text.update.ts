@@ -260,7 +260,7 @@ export class TextUpdate {
       cityMet: contact.cityMet,
     };
 
-    const filePath = await this.vault.createContact(contactData, []);
+    const filePath = await this.vault.createContact(contactData, [], ctx.session?.lastLocation);
     const fileName = filePath.split('/').pop()?.replace('.md', '') || filePath;
 
     ctx.session.pendingContact = undefined;
@@ -289,17 +289,19 @@ export class TextUpdate {
     const lastSave = ctx.session?.lastSave;
     if (!lastSave) return false;
 
-    // Only allow append within 10 minutes
-    if (Date.now() - lastSave.timestamp > 10 * 60 * 1000) return false;
+    ctx.session ??= {} as BotContext['session'];
+    ctx.session.pendingEdit = { text, filePath: lastSave.filePath, fileName: lastSave.fileName };
 
-    try {
-      await this.writer.appendToFile(lastSave.filePath, text);
-      await ctx.reply(`Appended to: ${lastSave.fileName}`);
-      return true;
-    } catch (error) {
-      this.logger.warn(`Failed to append: ${error}`);
-      return false;
-    }
+    const keyboard = Markup.inlineKeyboard([
+      [
+        Markup.button.callback('Append', 'edit_append'),
+        Markup.button.callback('Replace', 'edit_replace'),
+        Markup.button.callback('Cancel', 'cancel'),
+      ],
+    ]);
+
+    await ctx.reply(`"${lastSave.fileName}"\n\nAppend or replace body?`, keyboard);
+    return true;
   }
 
   private normalizeHandle(input: string, platform?: string): string {

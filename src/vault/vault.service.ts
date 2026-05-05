@@ -1,0 +1,310 @@
+import { Injectable } from '@nestjs/common';
+import { VaultWriterService } from './vault-writer.service.js';
+import { TemplateService } from './services/template.service.js';
+import { generateFileName } from './utils/slug.util.js';
+import { fetchUrlTitle } from './utils/url-detector.util.js';
+import { ClassificationResult } from '../ai/dto/classification-result.dto.js';
+import { ForwardMetadata } from '../shared/interfaces/forward-metadata.interface.js';
+import { format } from 'date-fns';
+
+const PRIORITY_EMOJI: Record<string, string> = {
+  high: '\u23EB',
+  medium: '\uD83D\uDD3C',
+  low: '\uD83D\uDD3D',
+};
+
+function buildPlatformLink(platform: string, handle: string): string {
+  const clean = handle.replace(/^@/, '');
+  switch (platform.toLowerCase()) {
+    case 'telegram':
+      return `[${handle}](https://t.me/${clean})`;
+    case 'instagram':
+      return `[${handle}](https://instagram.com/${clean})`;
+    case 'whatsapp':
+      return `[${handle}](https://wa.me/${clean.replace(/[^\d]/g, '')})`;
+    default:
+      return handle;
+  }
+}
+
+@Injectable()
+export class VaultService {
+  constructor(
+    readonly writer: VaultWriterService,
+    private readonly tpl: TemplateService,
+  ) {}
+
+  async createFromClassification(
+    content: string,
+    classification: ClassificationResult,
+    url?: string,
+    forwardMeta?: ForwardMetadata,
+    imageFileName?: string,
+    location?: { latitude: number; longitude: number },
+  ): Promise<string> {
+    const today = format(new Date(), 'yyyy-MM-dd');
+    const tags = classification.suggestedTags;
+    const lifeArea = classification.lifeArea;
+    const loc = location
+      ? `${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}`
+      : null;
+
+    let fileName = generateFileName(classification.title, today);
+    let filePath: string;
+
+    // Prepend forward attribution to content if forwarded
+    const bodyContent = forwardMeta
+      ? this.prependForwardAttribution(content, forwardMeta)
+      : content;
+
+    // Prepend image embed if photo note
+    const finalContent = imageFileName
+      ? `![[${imageFileName}]]\n\n${bodyContent}`
+      : bodyContent;
+
+    switch (classification.entityType) {
+      case 'link': {
+        const linkUrl = url || this.extractUrl(content) || '';
+        if (!fileName || fileName === today) {
+          const fetched = await fetchUrlTitle(linkUrl);
+          fileName = generateFileName(fetched || 'link', today);
+        }
+        const bodyText = content.replace(linkUrl, '').trim();
+        const markdown = this.tpl.render('link', {
+          url: linkUrl,
+          tags,
+          life_area: lifeArea || null,
+          geo: loc,
+          created: today,
+        }, bodyText || linkUrl);
+        filePath = await this.writer.writeFile('inbox', fileName, markdown);
+        break;
+      }
+      case 'task': {
+        const suffixParts: string[] = [];
+        if (classification.priority) suffixParts.push(PRIORITY_EMOJI[classification.priority] || '');
+        if (classification.recurrence) suffixParts.push(`\uD83D\uDD01 ${classification.recurrence}`);
+        if (classification.dueDate) suffixParts.push(`\uD83D\uDCC5 ${classification.dueDate}`);
+        const suffix = suffixParts.length > 0 ? ` ${suffixParts.join(' ')}` : '';
+
+        const lines = bodyContent
+          .split('\n')
+          .map(line => line.trim().replace(/^[-\u2022*]\s*/, ''))
+          .filter(line => line.length > 0)
+          .map(line => `- [ ] ${line}${suffix}`)
+          .join('\n');
+
+        const markdown = this.tpl.render('task', {
+          tags,
+          life_area: lifeArea || null,
+          geo: loc,
+          status: 'todo',
+          created: today,
+        }, lines);
+        filePath = await this.writer.writeFile('inbox', fileName, markdown);
+        break;
+      }
+      case 'task_list': {
+        const items = classification.items || content.split('\n').map(l => l.trim()).filter(Boolean);
+        const suffixParts: string[] = [];
+        if (classification.priority) suffixParts.push(PRIORITY_EMOJI[classification.priority] || '');
+        if (classification.dueDate) suffixParts.push(`\uD83D\uDCC5 ${classification.dueDate}`);
+        const suffix = suffixParts.length > 0 ? ` ${suffixParts.join(' ')}` : '';
+
+        const lines = items
+          .map(item => `- [ ] ${item.trim()}${suffix}`)
+          .join('\n');
+
+        const markdown = this.tpl.render('task_list', {
+          tags,
+          life_area: lifeArea || null,
+          geo: loc,
+          status: 'todo',
+          created: today,
+        }, lines);
+        filePath = await this.writer.writeFile('inbox', fileName, markdown);
+        break;
+      }
+      case 'event': {
+        const markdown = this.tpl.render('event', {
+          event_name: classification.eventData?.eventName || finalContent.slice(0, 50),
+          date: classification.eventData?.date || null,
+          location: classification.eventData?.location || null,
+          organizer: classification.eventData?.organizer || null,
+          tags,
+          life_area: lifeArea || null,
+          geo: loc,
+          status: 'upcoming',
+          created: today,
+        }, finalContent);
+        filePath = await this.writer.writeFile('inbox', fileName, markdown);
+        break;
+      }
+      case 'music': {
+        const audioParts: string[] = [];
+        if (classification.musicData?.audioFileName) {
+          audioParts.push(`![[${classification.musicData.audioFileName}]]`);
+        }
+        if (finalContent) {
+          audioParts.push(finalContent);
+        }
+
+        const markdown = this.tpl.render('music', {
+          tags,
+          life_area: lifeArea || 'music',
+          has_audio: !!classification.musicData?.audioFileName,
+          geo: loc,
+          created: today,
+        }, audioParts.join('\n\n'));
+        filePath = await this.writer.writeFile('inbox', fileName, markdown);
+        break;
+      }
+      case 'project': {
+        const allAreas = classification.projectData?.lifeAreas?.length
+          ? classification.projectData.lifeAreas
+          : [lifeArea].filter(Boolean);
+
+        const markdown = this.tpl.render(
+          'project',
+          {
+            tags,
+            life_area: lifeArea || null,
+            life_areas: allAreas,
+            status: 'active',
+            geo: loc,
+            goal: classification.projectData?.goal || null,
+            created: today,
+          },
+          undefined,
+          (templateBody, _content) => {
+            const sections: string[] = [];
+
+            if (classification.projectData?.goal) {
+              sections.push(`## Goal\n\n${classification.projectData.goal}`);
+            } else {
+              sections.push('## Goal\n\n');
+            }
+
+            if (classification.projectData?.actionPlan?.length) {
+              const items = classification.projectData.actionPlan
+                .map(item => `- [ ] ${item.trim()}`)
+                .join('\n');
+              sections.push(`## Action Plan\n\n${items}`);
+            } else {
+              sections.push('## Action Plan\n\n- [ ] ');
+            }
+
+            if (finalContent) {
+              sections.push(`## Notes\n\n${finalContent}`);
+            } else {
+              sections.push('## Notes\n\n');
+            }
+
+            sections.push('## Result\n\n');
+            return sections.join('\n\n');
+          },
+        );
+        filePath = await this.writer.writeFile('projects', fileName, markdown);
+        break;
+      }
+      default: {
+        const extra: Record<string, unknown> = {};
+        if (forwardMeta) {
+          extra.source = forwardMeta.sourceName;
+          extra.source_type = forwardMeta.sourceType;
+          if (forwardMeta.sourceUsername) extra.source_username = forwardMeta.sourceUsername;
+          if (forwardMeta.forwardDate) extra.forward_date = forwardMeta.forwardDate;
+        }
+        if (imageFileName) {
+          extra.has_attachment = true;
+        }
+
+        const markdown = this.tpl.render('note', {
+          tags,
+          life_area: lifeArea || null,
+          geo: loc,
+          created: today,
+          ...extra,
+        }, finalContent);
+        filePath = await this.writer.writeFile('inbox', fileName, markdown);
+        break;
+      }
+    }
+
+    if (lifeArea && classification.entityType !== 'task' && classification.entityType !== 'task_list') {
+      await this.writer.appendToMoc(lifeArea, `[[${fileName}]]`);
+
+      // Projects can span multiple life areas
+      if (classification.entityType === 'project' && classification.projectData?.lifeAreas) {
+        for (const area of classification.projectData.lifeAreas) {
+          if (area !== lifeArea) {
+            await this.writer.appendToMoc(area, `[[${fileName}]]`);
+          }
+        }
+      }
+    }
+
+    return filePath;
+  }
+
+  async createContact(
+    contactData: {
+      name: string;
+      phone?: string;
+      context?: string;
+      platforms?: Record<string, string>;
+      cityMet?: string;
+    },
+    tags: string[],
+    location?: { latitude: number; longitude: number },
+  ): Promise<string> {
+    const today = format(new Date(), 'yyyy-MM-dd');
+    const fileName = generateFileName(contactData.name, today);
+
+    // Build contacts section
+    const lines: string[] = [];
+    if (contactData.phone) {
+      lines.push(`- Phone: ${contactData.phone}`);
+    }
+    for (const [platform, handle] of Object.entries(contactData.platforms || {})) {
+      const link = buildPlatformLink(platform, handle);
+      lines.push(`- ${platform}: ${link}`);
+    }
+    const contactsSection = lines.length > 0
+      ? `## Contacts\n\n${lines.join('\n')}\n\n`
+      : '';
+
+    const markdown = this.tpl.render(
+      'contact',
+      {
+        name: contactData.name,
+        tags,
+        phone: contactData.phone || null,
+        city_met: contactData.cityMet || null,
+        date_met: today,
+        context: contactData.context || null,
+        geo: location ? `${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}` : null,
+        life_areas: ['people'],
+      },
+      undefined,
+      () => `${contactsSection}## Notes\n\n`,
+    );
+    const filePath = await this.writer.writeFile('contacts', fileName, markdown);
+
+    await this.writer.appendToMoc('people', `[[${fileName}]]`);
+
+    return filePath;
+  }
+
+  private prependForwardAttribution(content: string, meta: ForwardMetadata): string {
+    const sourceLabel = meta.sourceUsername
+      ? `${meta.sourceName} (${meta.sourceUsername})`
+      : meta.sourceName;
+    return `> Forwarded from **${sourceLabel}**\n\n${content}`;
+  }
+
+  private extractUrl(text: string): string | undefined {
+    const match = text.match(/https?:\/\/[^\s<>"']+/i);
+    return match?.[0];
+  }
+}

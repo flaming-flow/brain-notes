@@ -43,12 +43,27 @@ export interface PendingMusic {
   awaitingDescription?: boolean;
 }
 
+export interface PendingEdit {
+  text: string;
+  filePath: string;
+  fileName: string;
+}
+
+export interface SavedLocation {
+  latitude: number;
+  longitude: number;
+  name?: string;
+  timestamp: number;
+}
+
 export interface BotSession {
   pendingNote?: PendingNote;
   pendingContact?: PendingContact;
   pendingVoice?: PendingVoice;
   pendingMusic?: PendingMusic;
+  pendingEdit?: PendingEdit;
   lastSave?: LastSave;
+  lastLocation?: SavedLocation;
 }
 
 export type BotContext = Context & { session: BotSession };

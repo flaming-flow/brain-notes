@@ -10,8 +10,10 @@ import { TextUpdate } from './updates/text.update.js';
 import { ActionUpdate } from './updates/action.update.js';
 import { VoiceUpdate } from './updates/voice.update.js';
 import { PhotoUpdate } from './updates/photo.update.js';
+import { LocationUpdate } from './updates/location.update.js';
 import { VaultModule } from '../vault/vault.module.js';
 import { AiModule } from '../ai/ai.module.js';
+import { CouchDBModule } from '../couchdb/couchdb.module.js';
 
 @Module({
   imports: [
@@ -25,6 +27,7 @@ import { AiModule } from '../ai/ai.module.js';
     }),
     VaultModule,
     AiModule,
+    CouchDBModule,
   ],
   providers: [
     MessageProcessorService,
@@ -34,6 +37,7 @@ import { AiModule } from '../ai/ai.module.js';
     ActionUpdate,
     VoiceUpdate,
     PhotoUpdate,
+    LocationUpdate,
     AuthGuard,
   ],
 })
