@@ -28,16 +28,22 @@ export class VoiceUpdate {
 
     this.logger.log(`Voice message received (${voiceData.duration}s)`);
 
-    try {
-      await ctx.reply('Transcribing...');
+    const chatId = ctx.chat?.id;
+    if (!chatId) return;
 
-      const fileLink = await ctx.telegram.getFileLink(voiceData.file_id);
-      const rawText = await this.voice.transcribe(fileLink.href);
-      await this.showTranscriptionPreview(ctx, rawText);
-    } catch (error) {
-      this.logger.error(`Voice processing error: ${error}`);
-      await ctx.reply(`Error: ${error instanceof Error ? error.message : 'unknown'}`);
-    }
+    await ctx.reply('Got it, processing...');
+
+    // Process in background — don't block the user
+    const fileLink = await ctx.telegram.getFileLink(voiceData.file_id);
+    this.voice.transcribe(fileLink.href).then(
+      async (rawText) => {
+        await this.showTranscriptionPreview(ctx, rawText);
+      },
+      async (error) => {
+        this.logger.error(`Voice processing error: ${error}`);
+        await ctx.telegram.sendMessage(chatId, `Voice error: ${error instanceof Error ? error.message : 'unknown'}`);
+      },
+    );
   }
 
   @On('audio')

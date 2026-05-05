@@ -11,6 +11,7 @@ const CONTACTS_PER_PAGE = 8;
 
 const MAIN_KEYBOARD = Markup.keyboard([
   ['+ Contact', 'Contacts', 'Music'],
+  ['Met someone', 'Event', 'Idea'],
   [Markup.button.locationRequest('Send Location')],
 ]).resize();
 

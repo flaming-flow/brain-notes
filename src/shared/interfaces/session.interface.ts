@@ -64,6 +64,7 @@ export interface BotSession {
   pendingEdit?: PendingEdit;
   lastSave?: LastSave;
   lastLocation?: SavedLocation;
+  templateHint?: 'note' | 'event';
 }
 
 export type BotContext = Context & { session: BotSession };

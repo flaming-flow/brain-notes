@@ -58,9 +58,15 @@ export class VaultService {
       : content;
 
     // Prepend image embed if photo note
-    const finalContent = imageFileName
+    let finalContent = imageFileName
       ? `![[${imageFileName}]]\n\n${bodyContent}`
       : bodyContent;
+
+    // Append related notes as wikilinks
+    if (classification.relatedNotes?.length) {
+      const links = classification.relatedNotes.map(n => `[[${n}]]`).join(' | ');
+      finalContent += `\n\nRelated: ${links}`;
+    }
 
     switch (classification.entityType) {
       case 'link': {

@@ -49,6 +49,24 @@ export class TextUpdate {
       await ctx.reply('Send audio for your music idea.');
       return;
     }
+    if (text === 'Met someone') {
+      ctx.session ??= {} as BotContext['session'];
+      ctx.session.pendingContact = { step: 'name', name: '', platforms: {} };
+      await ctx.reply('Name of the person you met:');
+      return;
+    }
+    if (text === 'Event') {
+      await ctx.reply('Describe the event (name, date, place):');
+      ctx.session ??= {} as BotContext['session'];
+      ctx.session.templateHint = 'event';
+      return;
+    }
+    if (text === 'Idea') {
+      await ctx.reply('What\'s on your mind?');
+      ctx.session ??= {} as BotContext['session'];
+      ctx.session.templateHint = 'note';
+      return;
+    }
 
     this.logger.log(`Received: "${text.slice(0, 50)}..."`);
 
@@ -82,13 +100,20 @@ export class TextUpdate {
         return;
       }
 
-      // 6. Detect forwarded message
+      // 6. Template hint from quick buttons
+      const hintEntityType = ctx.session?.templateHint;
+      if (hintEntityType) {
+        ctx.session.templateHint = undefined;
+      }
+
+      // 7. Detect forwarded message
       const forwardMeta = this.extractForwardMeta(ctx);
 
-      // 7. Process normally
+      // 8. Process normally
       await this.processor.processMessage(ctx, text, {
         sourceType: forwardMeta ? 'forward' : 'text',
         forwardMeta,
+        hintEntityType,
       });
     } catch (error) {
       this.logger.error(`Error processing message: ${error}`);
