@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
 import { ClassificationResult } from './dto/classification-result.dto.js';
 import { buildClassifyPrompt } from './prompts/classify.prompt.js';
+import { CouchDBSyncService } from '../couchdb/couchdb-sync.service.js';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as yaml from 'js-yaml';
@@ -14,7 +15,10 @@ export class AiService {
   private readonly model: string;
   private readonly vaultPath: string;
 
-  constructor(private readonly config: ConfigService) {
+  constructor(
+    private readonly config: ConfigService,
+    private readonly couchSync: CouchDBSyncService,
+  ) {
     const provider = this.config.get<string>('ai.provider', 'openai');
 
     if (provider === 'openai') {
@@ -139,32 +143,37 @@ export class AiService {
   }
 
   private async getExistingNoteTitles(): Promise<string[]> {
-    const titles: string[] = [];
-    for (const dir of ['inbox', 'contacts', 'projects']) {
-      const dirPath = path.join(this.vaultPath, dir);
-      try {
-        const files = await fs.readdir(dirPath);
-        for (const file of files) {
-          if (file.endsWith('.md')) {
-            titles.push(file.replace('.md', ''));
-          }
-        }
-      } catch {
-        // Directory may not exist yet
+    try {
+      const ids: string[] = [];
+      for (const prefix of ['inbox/', 'contacts/', 'projects/']) {
+        const found = await this.couchSync.listByPrefix(prefix);
+        ids.push(...found);
       }
+      return ids.map(id => id.replace(/^[^/]+\//, '').replace('.md', ''));
+    } catch {
+      // Fallback to filesystem
+      const titles: string[] = [];
+      for (const dir of ['inbox', 'contacts', 'projects']) {
+        const dirPath = path.join(this.vaultPath, dir);
+        try {
+          const files = await fs.readdir(dirPath);
+          for (const file of files) {
+            if (file.endsWith('.md')) titles.push(file.replace('.md', ''));
+          }
+        } catch { /* skip */ }
+      }
+      return titles;
     }
-    return titles;
   }
 
   private async getUsedTags(): Promise<string[]> {
     const tagSet = new Set<string>();
-    const dirPath = path.join(this.vaultPath, 'inbox');
     try {
-      const files = await fs.readdir(dirPath);
-      for (const file of files.slice(-30)) {
-        // Scan last 30 notes for performance
-        if (!file.endsWith('.md')) continue;
-        const content = await fs.readFile(path.join(dirPath, file), 'utf-8');
+      const ids = await this.couchSync.listByPrefix('inbox/');
+      const recentIds = ids.slice(-30);
+      for (const id of recentIds) {
+        const content = await this.couchSync.readFile(id);
+        if (!content) continue;
         const match = content.match(/^---\n([\s\S]*?)\n---/);
         if (match?.[1]) {
           const frontmatter = yaml.load(match[1]) as Record<string, unknown>;
@@ -176,7 +185,24 @@ export class AiService {
         }
       }
     } catch {
-      // Directory may not exist
+      // Fallback to filesystem
+      const dirPath = path.join(this.vaultPath, 'inbox');
+      try {
+        const files = await fs.readdir(dirPath);
+        for (const file of files.slice(-30)) {
+          if (!file.endsWith('.md')) continue;
+          const content = await fs.readFile(path.join(dirPath, file), 'utf-8');
+          const match = content.match(/^---\n([\s\S]*?)\n---/);
+          if (match?.[1]) {
+            const frontmatter = yaml.load(match[1]) as Record<string, unknown>;
+            if (Array.isArray(frontmatter?.tags)) {
+              for (const tag of frontmatter.tags) {
+                if (typeof tag === 'string') tagSet.add(tag);
+              }
+            }
+          }
+        }
+      } catch { /* skip */ }
     }
     return [...tagSet];
   }

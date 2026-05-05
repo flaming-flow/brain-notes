@@ -266,7 +266,19 @@ export class TextUpdate {
     ctx.session.pendingContact = undefined;
     this.processor.storeLastSave(ctx, filePath, 'contacts', fileName, 'people');
 
-    await ctx.reply(`Contact saved: ${fileName}`);
+    const lines: string[] = [`*${contact.name}*`];
+    if (contact.phone) lines.push(`Phone: ${contact.phone}`);
+    for (const [platform, handle] of Object.entries(contact.platforms)) {
+      lines.push(`${platform}: ${handle}`);
+    }
+    if (contact.cityMet) lines.push(`Met: ${contact.cityMet}`);
+    if (contact.context) lines.push(`Context: ${contact.context}`);
+
+    const undoKeyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('Undo (60s)', 'undo_save')],
+    ]);
+
+    await ctx.reply(`Contact saved\n\n${lines.join('\n')}`, { ...undoKeyboard, parse_mode: 'Markdown' });
   }
 
   private async handleReplyAppend(ctx: BotContext, text: string): Promise<boolean> {

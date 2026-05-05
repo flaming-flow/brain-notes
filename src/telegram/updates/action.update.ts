@@ -69,6 +69,15 @@ export class ActionUpdate {
     await ctx.reply('Type your custom tag:');
   }
 
+  @Action('quick_save')
+  async onQuickSave(@Ctx() ctx: BotContext): Promise<void> {
+    const pending = ctx.session?.pendingNote;
+    if (!pending) return;
+    // Use AI-suggested tags as-is
+    pending.selectedTags = [...pending.classification.suggestedTags];
+    await this.onSave(ctx);
+  }
+
   @Action('save_note')
   async onSave(@Ctx() ctx: BotContext): Promise<void> {
     const pending = ctx.session?.pendingNote;

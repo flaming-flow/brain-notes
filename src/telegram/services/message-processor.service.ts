@@ -11,7 +11,14 @@ interface ProcessOptions {
   sourceType?: 'text' | 'voice' | 'forward' | 'photo' | 'audio';
   forwardMeta?: ForwardMetadata;
   imageFileName?: string;
-  hintEntityType?: 'note' | 'link' | 'task' | 'contact' | 'event' | 'music' | 'project';
+  hintEntityType?:
+    | 'note'
+    | 'link'
+    | 'task'
+    | 'contact'
+    | 'event'
+    | 'music'
+    | 'project';
 }
 
 @Injectable()
@@ -46,30 +53,65 @@ export class MessageProcessorService {
     }
 
     // Auto-save types: task, task_list, contact (quick mode)
-    if (classification.entityType === 'task' || classification.entityType === 'task_list') {
+    if (
+      classification.entityType === 'task' ||
+      classification.entityType === 'task_list'
+    ) {
       const filePath = await this.vault.createFromClassification(
-        text, classification, url, options.forwardMeta,
+        text,
+        classification,
+        url,
+        options.forwardMeta,
       );
-      const fileName = filePath.split('/').pop()?.replace('.md', '') || filePath;
+      const fileName =
+        filePath.split('/').pop()?.replace('.md', '') || filePath;
       const itemCount = classification.items?.length;
-      const typeLabel = classification.entityType === 'task_list'
-        ? `task_list (${itemCount || '?'} items)`
-        : 'task';
+      const typeLabel =
+        classification.entityType === 'task_list'
+          ? `task_list (${itemCount || '?'} items)`
+          : 'task';
       await ctx.reply(`Saved: ${fileName}\nType: ${typeLabel}`);
-      this.storeLastSave(ctx, filePath, 'inbox', fileName, classification.lifeArea);
+      this.storeLastSave(
+        ctx,
+        filePath,
+        'inbox',
+        fileName,
+        classification.lifeArea,
+      );
       return;
     }
 
     if (classification.entityType === 'contact' && classification.contactData) {
-      const filePath = await this.vault.createContact(classification.contactData, classification.suggestedTags);
-      const fileName = filePath.split('/').pop()?.replace('.md', '') || filePath;
-      await ctx.reply(`Contact saved: ${fileName}`);
+      const filePath = await this.vault.createContact(
+        classification.contactData,
+        classification.suggestedTags,
+      );
+      const fileName =
+        filePath.split('/').pop()?.replace('.md', '') || filePath;
       this.storeLastSave(ctx, filePath, 'contacts', fileName, 'people');
+
+      const cd = classification.contactData;
+      const lines: string[] = [`*${cd.name}*`];
+      if (cd.platforms) {
+        for (const [platform, handle] of Object.entries(cd.platforms)) {
+          lines.push(`${platform}: ${handle}`);
+        }
+      }
+      if (cd.cityMet) lines.push(`Met: ${cd.cityMet}`);
+      if (cd.context) lines.push(`Context: ${cd.context}`);
+
+      const undoKeyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('Undo (60s)', 'undo_save')],
+      ]);
+      await ctx.reply(`Contact saved\n\n${lines.join('\n')}`, {
+        ...undoKeyboard,
+        parse_mode: 'Markdown',
+      });
       return;
     }
 
     // Interactive types: note, link, event — show tag keyboard
-    ctx.session ??= {} as BotContext['session'];
+    ctx.session ??= {};
     ctx.session.pendingNote = {
       content: text,
       url,
@@ -90,7 +132,7 @@ export class MessageProcessorService {
     const { classification, selectedTags } = pending;
 
     // Life area buttons (2 rows of 4)
-    const areaButtons = LIFE_AREAS.map(area =>
+    const areaButtons = LIFE_AREAS.map((area) =>
       Markup.button.callback(
         `${classification.lifeArea === area ? '✓' : '○'} ${area}`,
         `area:${area}`,
@@ -102,7 +144,7 @@ export class MessageProcessorService {
     }
 
     // Tag buttons (rows of 2)
-    const tagButtons = classification.suggestedTags.map(tag => {
+    const tagButtons = classification.suggestedTags.map((tag) => {
       const isSelected = selectedTags.includes(tag);
       return Markup.button.callback(
         `${isSelected ? '✓' : '○'} ${tag}`,
@@ -119,6 +161,7 @@ export class MessageProcessorService {
       ...tagRows,
       [
         Markup.button.callback('+ Add tag', 'add_tag'),
+        Markup.button.callback('Quick Save', 'quick_save'),
         Markup.button.callback('Save', 'save_note'),
         Markup.button.callback('Cancel', 'cancel'),
       ],
@@ -152,13 +195,19 @@ export class MessageProcessorService {
         entityType: 'link' as const,
       };
       const filePath = await this.vault.createFromClassification(
-        url, singleClassification, url, options.forwardMeta,
+        url,
+        singleClassification,
+        url,
+        options.forwardMeta,
       );
-      const fileName = filePath.split('/').pop()?.replace('.md', '') || filePath;
+      const fileName =
+        filePath.split('/').pop()?.replace('.md', '') || filePath;
       savedFiles.push(fileName);
     }
 
-    await ctx.reply(`Saved ${savedFiles.length} links:\n${savedFiles.map(f => `- ${f}`).join('\n')}`);
+    await ctx.reply(
+      `Saved ${savedFiles.length} links:\n${savedFiles.map((f) => `- ${f}`).join('\n')}`,
+    );
   }
 
   buildConfirmation(
@@ -167,9 +216,8 @@ export class MessageProcessorService {
     lifeArea: string | undefined,
     tags: string[],
   ): string {
-    const tagsStr = tags.length > 0
-      ? `\nTags: ${tags.map(t => `#${t}`).join(' ')}`
-      : '';
+    const tagsStr =
+      tags.length > 0 ? `\nTags: ${tags.map((t) => `#${t}`).join(' ')}` : '';
     return (
       `Saved: ${fileName}` +
       `\nType: ${entityType}` +
@@ -185,7 +233,7 @@ export class MessageProcessorService {
     fileName: string,
     lifeArea?: string,
   ): void {
-    ctx.session ??= {} as BotContext['session'];
+    ctx.session ??= {};
     ctx.session.lastSave = {
       filePath,
       folder,
