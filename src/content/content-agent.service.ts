@@ -92,18 +92,32 @@ export class ContentAgentService {
     let sourceIds: string[];
 
     if (topic) {
-      const results = await this.embedding.searchSimilar(topic, 8);
+      const results = await this.embedding.searchSimilar(topic, 5);
       sourceIds = results.map((r) => r.docId);
-      context = results.length > 0
+      context = sourceIds.length > 0
         ? await this.buildContext(sourceIds)
         : '';
     } else {
+      // No topic — pick a random recent topic via embeddings
       const recentIds = await this.couchSync.listByPrefix('inbox/');
-      sourceIds = recentIds.slice(-10);
-      context = await this.buildContext(sourceIds);
-      if (!context) {
+      if (recentIds.length === 0) {
         return { post: 'No notes yet. Send me some ideas first!', sources: [] };
       }
+      // Pick a random recent note as seed, find similar ones
+      const seedId = recentIds[Math.floor(Math.random() * Math.min(recentIds.length, 10) + (recentIds.length - 10))];
+      const seedContent = await this.couchSync.readFile(seedId);
+      if (!seedContent) {
+        return { post: 'No notes yet. Send me some ideas first!', sources: [] };
+      }
+      const bodyMatch = seedContent.match(/^---\n[\s\S]*?\n---\n([\s\S]*)$/);
+      const seedBody = bodyMatch?.[1]?.trim() || seedContent;
+      const results = await this.embedding.searchSimilar(seedBody.slice(0, 200), 5);
+      sourceIds = results.map((r) => r.docId);
+      context = await this.buildContext(sourceIds);
+    }
+
+    if (!context) {
+      return { post: 'No relevant notes found.', sources: [] };
     }
 
     const sources = sourceIds
@@ -125,7 +139,8 @@ export class ContentAgentService {
             '- End with a question that invites discussion\n' +
             '- NO corporate/motivational speaker tone\n' +
             '- NO cliches like "in today\'s world" or "it\'s important to"\n' +
-            '- Under 500 characters\n\n' +
+            '- Under 500 characters\n' +
+            '- ALWAYS write in Russian\n\n' +
             'Write ONLY the post text. After the post, on a new line write hashtags (3-5, with #).\n' +
             'Do NOT add labels like [POST] or [HASHTAGS].',
         },
