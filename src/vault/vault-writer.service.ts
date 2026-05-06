@@ -38,7 +38,9 @@ export class VaultWriterService {
     const docId = `moc-${lifeArea}.md`;
     const content = await this.couchSync.readFile(docId);
     if (content && !content.includes(wikilink)) {
-      const updated = content + `- ${wikilink}\n`;
+      // Ensure content ends with newline before appending
+      const base = content.endsWith('\n') ? content : content + '\n';
+      const updated = base + `- ${wikilink}\n`;
       await this.couchSync.writeFile(docId, updated);
     }
   }
