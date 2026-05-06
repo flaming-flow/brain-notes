@@ -19,6 +19,7 @@ export class ContentAgentService {
   private readonly logger = new Logger(ContentAgentService.name);
   private readonly openai: OpenAI;
   private readonly model: string;
+  private readonly contentModel: string;
 
   constructor(
     private readonly config: ConfigService,
@@ -29,6 +30,7 @@ export class ContentAgentService {
       apiKey: this.config.getOrThrow<string>('ai.openai.apiKey'),
     });
     this.model = this.config.get<string>('ai.openai.model', 'gpt-4o-mini');
+    this.contentModel = this.config.get<string>('ai.openai.contentModel', 'gpt-4.1-mini');
   }
 
   async ask(question: string): Promise<string> {
@@ -134,7 +136,7 @@ export class ContentAgentService {
       .map((id) => id.replace('.md', '').replace(/^[^/]+\//, ''));
 
     const response = await this.openai.chat.completions.create({
-      model: this.model,
+      model: this.contentModel,
       messages: [
         {
           role: 'system',
@@ -166,7 +168,7 @@ export class ContentAgentService {
       : '';
 
     const response = await this.openai.chat.completions.create({
-      model: this.model,
+      model: this.contentModel,
       messages: [
         {
           role: 'system',
