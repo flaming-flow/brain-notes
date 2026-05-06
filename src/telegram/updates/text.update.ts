@@ -6,6 +6,7 @@ import { MessageProcessorService } from '../services/message-processor.service.j
 import { VaultService } from '../../vault/vault.service.js';
 import { VaultWriterService } from '../../vault/vault-writer.service.js';
 import { CommandUpdate } from './command.update.js';
+import { ContentAgentService } from '../../content/content-agent.service.js';
 import type { BotContext } from '../../shared/interfaces/session.interface.js';
 import type { ForwardMetadata } from '../../shared/interfaces/forward-metadata.interface.js';
 
@@ -19,6 +20,7 @@ export class TextUpdate {
     private readonly vault: VaultService,
     private readonly writer: VaultWriterService,
     private readonly commandUpdate: CommandUpdate,
+    private readonly contentAgent: ContentAgentService,
   ) {}
 
   @On('text')
@@ -71,6 +73,12 @@ export class TextUpdate {
     this.logger.log(`Received: "${text.slice(0, 50)}..."`);
 
     try {
+      // 0. Content regeneration with feedback
+      if ((ctx.session as Record<string, unknown>)?.awaitingRegenPrompt) {
+        await this.handleRegenFeedback(ctx, text);
+        return;
+      }
+
       // 1. Music description input
       if (ctx.session?.pendingMusic?.awaitingDescription) {
         await this.handleMusicDescription(ctx, text);
@@ -328,6 +336,33 @@ export class TextUpdate {
 
     await ctx.reply(`"${lastSave.fileName}"\n\nAppend or replace body?`, keyboard);
     return true;
+  }
+
+  private async handleRegenFeedback(ctx: BotContext, text: string): Promise<void> {
+    const session = ctx.session as Record<string, unknown>;
+    session.awaitingRegenPrompt = false;
+    const previousPost = (session.lastGenerated as string) || '';
+
+    await ctx.reply('Regenerating...');
+
+    let result: string;
+    if (text.toLowerCase() === 'ok') {
+      const topic = (session.lastTopic as string) || '';
+      result = await this.contentAgent.generateThreads(topic);
+    } else {
+      result = await this.contentAgent.regenerateWithFeedback(previousPost, text);
+    }
+
+    session.lastGenerated = result;
+
+    const keyboard = Markup.inlineKeyboard([
+      [
+        Markup.button.callback('Regenerate', 'regen_threads'),
+        Markup.button.callback('Save as draft', 'save_draft'),
+      ],
+    ]);
+
+    await ctx.reply(result, keyboard);
   }
 
   private normalizeHandle(input: string, platform?: string): string {

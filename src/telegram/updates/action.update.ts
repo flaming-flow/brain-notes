@@ -317,19 +317,13 @@ export class ActionUpdate {
 
   @Action('regen_threads')
   async onRegenThreads(@Ctx() ctx: BotContext): Promise<void> {
-    await ctx.answerCbQuery('Regenerating...');
-    const topic = ((ctx.session as Record<string, unknown>)?.lastTopic as string) || '';
-    const result = await this.contentAgent.generateThreads(topic);
-    (ctx.session as Record<string, unknown>).lastGenerated = result;
+    await ctx.answerCbQuery();
+    const session = ctx.session as Record<string, unknown>;
+    session.awaitingRegenPrompt = true;
 
-    const keyboard = Markup.inlineKeyboard([
-      [
-        Markup.button.callback('Regenerate', 'regen_threads'),
-        Markup.button.callback('Save as draft', 'save_draft'),
-      ],
-    ]);
-
-    await ctx.editMessageText(result, keyboard);
+    await ctx.editMessageText(
+      `Current post:\n\n${session.lastGenerated}\n\n---\nSend feedback (what to change) or "ok" to regenerate as-is:`,
+    );
   }
 
   @Action('save_draft')

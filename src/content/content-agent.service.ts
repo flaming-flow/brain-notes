@@ -109,6 +109,30 @@ export class ContentAgentService {
     return response.choices[0]?.message?.content?.trim() || 'Failed to generate.';
   }
 
+  async regenerateWithFeedback(previousPost: string, feedback: string): Promise<string> {
+    const response = await this.openai.chat.completions.create({
+      model: this.model,
+      messages: [
+        {
+          role: 'system',
+          content:
+            'You are a content editor for Threads. ' +
+            'Rewrite the post based on the user feedback. ' +
+            'Keep the same format: [POST] section + [HASHTAGS] section. ' +
+            'Keep it under 500 characters. Same language as original.',
+        },
+        {
+          role: 'user',
+          content: `Original post:\n${previousPost}\n\nFeedback: ${feedback}`,
+        },
+      ],
+      max_tokens: 500,
+      temperature: 0.7,
+    });
+
+    return response.choices[0]?.message?.content?.trim() || previousPost;
+  }
+
   private async buildContext(docIds: string[]): Promise<string> {
     const parts: string[] = [];
 
