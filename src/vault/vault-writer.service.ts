@@ -24,7 +24,7 @@ export class VaultWriterService {
 
   private async ensureMocFiles(): Promise<void> {
     for (const area of LIFE_AREAS) {
-      const docId = `MOC-${area}.md`;
+      const docId = `moc-${area}.md`;
       const existing = await this.couchSync.readFile(docId);
       if (!existing) {
         const content = `---\ntype: moc\nlife_area: ${area}\n---\n\n# ${area.charAt(0).toUpperCase() + area.slice(1)}\n\n`;
@@ -35,7 +35,7 @@ export class VaultWriterService {
   }
 
   async appendToMoc(lifeArea: string, wikilink: string): Promise<void> {
-    const docId = `MOC-${lifeArea}.md`;
+    const docId = `moc-${lifeArea}.md`;
     const content = await this.couchSync.readFile(docId);
     if (content && !content.includes(wikilink)) {
       const updated = content + `- ${wikilink}\n`;
@@ -75,7 +75,7 @@ export class VaultWriterService {
   }
 
   async removeFromMoc(lifeArea: string, wikilink: string): Promise<void> {
-    const docId = `MOC-${lifeArea}.md`;
+    const docId = `moc-${lifeArea}.md`;
     const content = await this.couchSync.readFile(docId);
     if (content) {
       const updated = content.replace(`- ${wikilink}\n`, '');
