@@ -59,7 +59,15 @@ export class ActionUpdate {
     const area = callbackData?.replace('area:', '');
     if (!area) return;
 
-    pending.classification.lifeArea = area;
+    // Toggle area (multi-select)
+    const idx = pending.selectedAreas.indexOf(area);
+    if (idx >= 0) {
+      pending.selectedAreas.splice(idx, 1);
+    } else {
+      pending.selectedAreas.push(area);
+    }
+    // Keep primary lifeArea as first selected
+    pending.classification.lifeArea = pending.selectedAreas[0] || '';
 
     await ctx.answerCbQuery(area);
     await this.processor.showTagKeyboard(ctx, true);
@@ -97,6 +105,7 @@ export class ActionUpdate {
         pending.forwardMeta,
         pending.imageFileName,
         ctx.session?.lastLocation,
+        pending.selectedAreas,
       );
 
       const fileName = filePath.split('/').pop()?.replace('.md', '') || filePath;
@@ -381,6 +390,7 @@ export class ActionUpdate {
         },
       },
       selectedTags: ['sketch'],
+      selectedAreas: ['music'],
       sourceType: 'audio',
     };
 

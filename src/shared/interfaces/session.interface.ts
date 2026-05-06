@@ -7,6 +7,7 @@ export interface PendingNote {
   url?: string;
   classification: ClassificationResult;
   selectedTags: string[];
+  selectedAreas: string[];
   waitingForCustomTag?: boolean;
   sourceType?: 'text' | 'voice' | 'forward' | 'photo' | 'audio';
   forwardMeta?: ForwardMetadata;

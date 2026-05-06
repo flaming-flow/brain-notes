@@ -141,6 +141,7 @@ export class TextUpdate {
         },
       },
       selectedTags: ['sketch'],
+      selectedAreas: ['music'],
       sourceType: 'audio',
     };
 

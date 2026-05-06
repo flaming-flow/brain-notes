@@ -41,6 +41,7 @@ export class VaultService {
     forwardMeta?: ForwardMetadata,
     imageFileName?: string,
     location?: { latitude: number; longitude: number },
+    additionalAreas?: string[],
   ): Promise<string> {
     const today = format(new Date(), 'yyyy-MM-dd');
     const tags = classification.suggestedTags;
@@ -237,16 +238,17 @@ export class VaultService {
       }
     }
 
-    if (lifeArea && classification.entityType !== 'task' && classification.entityType !== 'task_list') {
-      await this.writer.appendToMoc(lifeArea, `[[${fileName}]]`);
-
-      // Projects can span multiple life areas
+    if (classification.entityType !== 'task' && classification.entityType !== 'task_list') {
+      // Collect all areas to add to MOCs
+      const allAreas = new Set<string>();
+      if (lifeArea) allAreas.add(lifeArea);
+      if (additionalAreas) additionalAreas.forEach((a) => allAreas.add(a));
       if (classification.entityType === 'project' && classification.projectData?.lifeAreas) {
-        for (const area of classification.projectData.lifeAreas) {
-          if (area !== lifeArea) {
-            await this.writer.appendToMoc(area, `[[${fileName}]]`);
-          }
-        }
+        classification.projectData.lifeAreas.forEach((a) => allAreas.add(a));
+      }
+
+      for (const area of allAreas) {
+        await this.writer.appendToMoc(area, `[[${fileName}]]`);
       }
     }
 

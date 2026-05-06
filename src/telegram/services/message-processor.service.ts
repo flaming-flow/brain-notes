@@ -123,6 +123,7 @@ export class MessageProcessorService {
       url,
       classification,
       selectedTags: [...classification.suggestedTags],
+      selectedAreas: classification.lifeArea ? [classification.lifeArea] : [],
       sourceType: options.sourceType,
       forwardMeta: options.forwardMeta,
       imageFileName: options.imageFileName,
@@ -137,10 +138,11 @@ export class MessageProcessorService {
 
     const { classification, selectedTags } = pending;
 
-    // Life area buttons (2 rows of 4)
+    // Life area buttons (multi-select, 2 rows of 4)
+    const selectedAreas = pending.selectedAreas;
     const areaButtons = LIFE_AREAS.map((area) =>
       Markup.button.callback(
-        `${classification.lifeArea === area ? '✓' : '○'} ${area}`,
+        `${selectedAreas.includes(area) ? '✓' : '○'} ${area}`,
         `area:${area}`,
       ),
     );
@@ -173,10 +175,11 @@ export class MessageProcessorService {
       ],
     ]);
 
+    const areasDisplay = selectedAreas.length > 0 ? selectedAreas.join(', ') : '?';
     const text =
-      `${classification.entityType} | ${classification.lifeArea || '?'}\n` +
+      `${classification.entityType} | ${areasDisplay}\n` +
       `Title: ${classification.title}\n\n` +
-      `Select tags:`;
+      `Select areas & tags:`;
 
     if (edit) {
       await ctx.editMessageText(text, keyboard);
