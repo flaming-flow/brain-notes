@@ -91,8 +91,15 @@ export class ContentAgentService {
 
     try {
       const raw = response.choices[0]?.message?.content?.trim() || '[]';
-      return JSON.parse(raw) as string[];
-    } catch {
+      this.logger.log(`AI topics response: ${raw.slice(0, 200)}`);
+      // Extract JSON array even if surrounded by markdown
+      const match = raw.match(/\[[\s\S]*\]/);
+      if (match) {
+        return JSON.parse(match[0]) as string[];
+      }
+      return [];
+    } catch (err) {
+      this.logger.warn(`Failed to parse topics: ${(err as Error).message}`);
       return [];
     }
   }
