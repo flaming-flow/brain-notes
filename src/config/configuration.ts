@@ -11,7 +11,7 @@ export default () => ({
     openai: {
       apiKey: process.env.OPENAI_API_KEY || '',
       model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
-      contentModel: process.env.CONTENT_MODEL || process.env.OPENAI_MODEL || 'gpt-4.1-mini',
+      contentModel: process.env.CONTENT_MODEL || process.env.OPENAI_MODEL || 'gpt-4.1',
     },
     anthropic: {
       apiKey: process.env.ANTHROPIC_API_KEY || '',
