@@ -227,9 +227,23 @@ export class ContentAgentService {
       const content = await this.couchSync.readFile(id);
       if (!content) continue;
 
-      const bodyMatch = content.match(/^---\n[\s\S]*?\n---\n([\s\S]*)$/);
-      const body = bodyMatch?.[1]?.trim() || content;
       const title = id.replace('.md', '').replace(/^[^/]+\//, '');
+      let body: string;
+
+      if (id.startsWith('contacts/')) {
+        // Include frontmatter for contacts
+        const name = content.match(/^name:\s*"?(.+?)"?\s*$/m)?.[1] || '';
+        const context = content.match(/^context:\s*"?(.+?)"?\s*$/m)?.[1] || '';
+        const cityMet = content.match(/^city_met:\s*"?(.+?)"?\s*$/m)?.[1] || '';
+        const phone = content.match(/^phone:\s*"?(.+?)"?\s*$/m)?.[1] || '';
+        const bodyMatch = content.match(/^---\n[\s\S]*?\n---\n([\s\S]*)$/);
+        const noteBody = bodyMatch?.[1]?.trim() || '';
+        const meta = [name, context, cityMet, phone].filter(Boolean).join('. ');
+        body = meta + (noteBody ? '\n' + noteBody : '');
+      } else {
+        const bodyMatch = content.match(/^---\n[\s\S]*?\n---\n([\s\S]*)$/);
+        body = bodyMatch?.[1]?.trim() || content;
+      }
 
       parts.push(`### ${title}\n${body.slice(0, CONTEXT_NOTE_MAX_CHARS)}`);
     }
