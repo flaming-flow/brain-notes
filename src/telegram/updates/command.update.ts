@@ -222,8 +222,11 @@ export class CommandUpdate {
         return;
       }
 
-      const buttons = topics.map((t) => [
-        Markup.button.callback(t.slice(0, 60), `gen_topic:${t.slice(0, 60)}`),
+      ctx.session ??= {} as BotContext['session'];
+      (ctx.session as Record<string, unknown>).suggestedTopics = topics;
+
+      const buttons = topics.map((t, i) => [
+        Markup.button.callback(t.slice(0, 60), `gen_topic:${i}`),
       ]);
 
       const keyboard = Markup.inlineKeyboard(buttons);

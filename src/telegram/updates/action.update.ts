@@ -315,10 +315,12 @@ export class ActionUpdate {
 
   // --- Content generation actions ---
 
-  @Action(/^gen_topic:(.+)$/)
+  @Action(/^gen_topic:\d+$/)
   async onGenTopic(@Ctx() ctx: BotContext): Promise<void> {
     const callbackData = (ctx.callbackQuery as { data?: string })?.data;
-    const topic = callbackData?.replace('gen_topic:', '') || '';
+    const idx = parseInt(callbackData?.replace('gen_topic:', '') || '0', 10);
+    const topics = ((ctx.session as Record<string, unknown>)?.suggestedTopics as string[]) || [];
+    const topic = topics[idx] || '';
     await ctx.answerCbQuery();
     await ctx.editMessageText(`Topic: ${topic}`);
     await this.commandUpdate.generateAndReply(ctx, topic);
