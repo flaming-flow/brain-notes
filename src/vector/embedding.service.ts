@@ -22,11 +22,25 @@ export class EmbeddingService {
 
   async indexNote(docId: string, content: string): Promise<void> {
     try {
-      // Strip frontmatter for embedding
-      const bodyMatch = content.match(/^---\n[\s\S]*?\n---\n([\s\S]*)$/);
-      const body = bodyMatch?.[1]?.trim() || content;
+      // For contacts: include frontmatter (name, context, city_met)
+      // For others: strip frontmatter
+      const isContact = docId.startsWith('contacts/');
+      let body: string;
 
-      if (body.length < 10) return; // Skip very short notes
+      if (isContact) {
+        // Include key frontmatter fields for better search
+        const name = content.match(/^name:\s*"?(.+?)"?\s*$/m)?.[1] || '';
+        const context = content.match(/^context:\s*"?(.+?)"?\s*$/m)?.[1] || '';
+        const cityMet = content.match(/^city_met:\s*"?(.+?)"?\s*$/m)?.[1] || '';
+        const bodyMatch = content.match(/^---\n[\s\S]*?\n---\n([\s\S]*)$/);
+        const noteBody = bodyMatch?.[1]?.trim() || '';
+        body = [name, context, cityMet, noteBody].filter(Boolean).join('. ');
+      } else {
+        const bodyMatch = content.match(/^---\n[\s\S]*?\n---\n([\s\S]*)$/);
+        body = bodyMatch?.[1]?.trim() || content;
+      }
+
+      if (body.length < 10) return;
 
       const vector = await this.embed(body);
 
