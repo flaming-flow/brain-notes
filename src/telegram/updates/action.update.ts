@@ -291,7 +291,7 @@ export class ActionUpdate {
       [Markup.button.callback('Edit', `edit_note:${docId}`)],
     ]);
 
-    await ctx.editMessageText(`*${title}*\n\n${display}`, { ...keyboard, parse_mode: 'Markdown' });
+    await ctx.editMessageText(`${title}\n\n${display}`, keyboard);
   }
 
   @Action(/^edit_note:(.+)$/)
@@ -464,7 +464,7 @@ export class ActionUpdate {
       ? display.slice(0, 3500) + '\n\n... (truncated)'
       : display;
 
-    await ctx.editMessageText(truncated, { ...keyboard, parse_mode: 'Markdown' });
+    await ctx.editMessageText(truncated, keyboard);
   }
 
   private formatContactDisplay(content: string, fileName: string): string {
@@ -478,7 +478,7 @@ export class ActionUpdate {
     const context = content.match(/^context:\s*"?(.+?)"?\s*$/m)?.[1];
     const tags = content.match(/^tags:\s*\[(.+)\]$/m)?.[1];
 
-    lines.push(`*${name}*`);
+    lines.push(name);
     if (phone) lines.push(`Phone: ${phone}`);
     if (cityMet) lines.push(`Met in: ${cityMet}`);
     if (dateMet) lines.push(`Date: ${dateMet}`);
