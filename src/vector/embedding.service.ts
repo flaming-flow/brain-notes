@@ -73,6 +73,7 @@ export class EmbeddingService {
   async searchSimilar(query: string, limit = 5): Promise<Array<{ docId: string; score: number; preview: string }>> {
     const vector = await this.embed(query);
     const results = await this.qdrant.search(vector, limit);
+    this.logger.log(`Search "${query.slice(0, 50)}": ${results.map((r) => `${r.id}(${r.score.toFixed(2)})`).join(', ')}`);
     return results.map((r) => ({
       docId: r.id,
       score: r.score,
