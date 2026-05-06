@@ -9,6 +9,7 @@ import { VaultWriterService } from '../../vault/vault-writer.service.js';
 import { VaultReaderService } from '../../vault/vault-reader.service.js';
 import { CouchDBSyncService } from '../../couchdb/couchdb-sync.service.js';
 import { ContentAgentService } from '../../content/content-agent.service.js';
+import type { ThreadsFormat } from '../../content/prompts/threads.prompt.js';
 import { TextUpdate } from './text.update.js';
 import { CommandUpdate } from './command.update.js';
 import type { BotContext } from '../../shared/interfaces/session.interface.js';
@@ -326,32 +327,59 @@ export class ActionUpdate {
     await this.commandUpdate.generateAndReply(ctx, topic);
   }
 
+  @Action(/^gen_format:.+$/)
+  async onGenFormat(@Ctx() ctx: BotContext): Promise<void> {
+    const callbackData = (ctx.callbackQuery as { data?: string })?.data;
+    const format = callbackData?.replace('gen_format:', '') as ThreadsFormat;
+    const gen = ctx.session?.contentGen;
+    if (!gen?.lastTopic) {
+      await ctx.answerCbQuery('No topic');
+      return;
+    }
+    await ctx.answerCbQuery(`Switching to ${format}...`);
+    await this.commandUpdate.generateAndReply(ctx, gen.lastTopic, format);
+  }
+
   @Action('regen_threads')
   async onRegenThreads(@Ctx() ctx: BotContext): Promise<void> {
     await ctx.answerCbQuery();
-    const session = ctx.session as Record<string, unknown>;
-    session.awaitingRegenPrompt = true;
+    const gen = ctx.session?.contentGen;
+    if (!gen?.lastGenerated) return;
+
+    gen.awaitingRegenPrompt = true;
 
     await ctx.editMessageText(
-      `Current post:\n\n${session.lastGenerated}\n\n---\nSend feedback (what to change) or "ok" to regenerate as-is:`,
+      `Current post:\n\n${gen.lastGenerated}\n\n---\nSend feedback (what to change) or "ok" to regenerate as-is:`,
     );
   }
 
   @Action('save_draft')
   async onSaveDraft(@Ctx() ctx: BotContext): Promise<void> {
-    const content = (ctx.session as Record<string, unknown>)?.lastGenerated as string;
-    if (!content) {
+    const gen = ctx.session?.contentGen;
+    if (!gen?.lastGenerated) {
       await ctx.answerCbQuery('Nothing to save');
       return;
     }
 
     const today = new Date().toISOString().split('T')[0];
-    const markdown = `---\ntype: draft\ncontent_type: threads\ncreated: ${today}\nstatus: draft\n---\n\n${content}\n`;
+    const markdown = `---\ntype: draft\ncontent_type: threads\ncreated: ${today}\nstatus: draft\n---\n\n${gen.lastGenerated}\n`;
     await this.couchSync.writeFile(`drafts/threads-${Date.now()}.md`, markdown);
 
-    (ctx.session as Record<string, unknown>).lastGenerated = undefined;
+    ctx.session.contentGen = undefined;
     await ctx.answerCbQuery('Saved!');
-    await ctx.editMessageText(`Draft saved\n\n${content}`);
+    await ctx.editMessageText(`Draft saved\n\n${gen.lastGenerated}`);
+  }
+
+  @Action('save_example')
+  async onSaveExample(@Ctx() ctx: BotContext): Promise<void> {
+    const gen = ctx.session?.contentGen;
+    if (!gen?.lastGenerated) {
+      await ctx.answerCbQuery('Nothing to save');
+      return;
+    }
+
+    await this.contentAgent.saveVoiceSample(gen.lastGenerated);
+    await ctx.answerCbQuery('Saved as voice example!');
   }
 
   // --- Cancel action (works for notes, contacts, voice, music) ---

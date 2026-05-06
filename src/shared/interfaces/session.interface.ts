@@ -57,6 +57,14 @@ export interface SavedLocation {
   timestamp: number;
 }
 
+export interface ContentGeneration {
+  lastGenerated?: string;
+  lastTopic?: string;
+  lastFormat?: string;
+  lastSources?: string[];
+  awaitingRegenPrompt?: boolean;
+}
+
 export interface BotSession {
   pendingNote?: PendingNote;
   pendingContact?: PendingContact;
@@ -66,6 +74,7 @@ export interface BotSession {
   lastSave?: LastSave;
   lastLocation?: SavedLocation;
   templateHint?: 'note' | 'event';
+  contentGen?: ContentGeneration;
 }
 
 export type BotContext = Context & { session: BotSession };

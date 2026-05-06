@@ -74,7 +74,7 @@ export class TextUpdate {
 
     try {
       // 0. Content regeneration with feedback
-      if ((ctx.session as Record<string, unknown>)?.awaitingRegenPrompt) {
+      if (ctx.session?.contentGen?.awaitingRegenPrompt) {
         await this.handleRegenFeedback(ctx, text);
         return;
       }
@@ -339,31 +339,22 @@ export class TextUpdate {
   }
 
   private async handleRegenFeedback(ctx: BotContext, text: string): Promise<void> {
-    const session = ctx.session as Record<string, unknown>;
-    session.awaitingRegenPrompt = false;
-    const previousPost = (session.lastGenerated as string) || '';
+    const gen = ctx.session.contentGen!;
+    gen.awaitingRegenPrompt = false;
 
     await ctx.reply('Regenerating...');
 
-    let post: string;
     if (text.toLowerCase() === 'ok') {
-      const topic = (session.lastTopic as string) || '';
-      const generated = await this.contentAgent.generateThreads(topic);
-      post = generated.post;
+      await this.commandUpdate.generateAndReply(ctx, gen.lastTopic || '', (gen.lastFormat as any) || 'auto');
     } else {
-      post = await this.contentAgent.regenerateWithFeedback(previousPost, text);
+      const post = await this.contentAgent.regenerateWithFeedback(
+        gen.lastGenerated || '',
+        text,
+        (gen.lastFormat as any) || undefined,
+      );
+      gen.lastGenerated = post;
+      await this.commandUpdate.replyWithPost(ctx, post, gen.lastSources);
     }
-
-    session.lastGenerated = post;
-
-    const keyboard = Markup.inlineKeyboard([
-      [
-        Markup.button.callback('Regenerate', 'regen_threads'),
-        Markup.button.callback('Save as draft', 'save_draft'),
-      ],
-    ]);
-
-    await ctx.reply(post, keyboard);
   }
 
   private normalizeHandle(input: string, platform?: string): string {

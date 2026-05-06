@@ -7,6 +7,7 @@ import { VaultReaderService } from '../../vault/vault-reader.service.js';
 import { CouchDBSyncService } from '../../couchdb/couchdb-sync.service.js';
 import { EmbeddingService } from '../../vector/embedding.service.js';
 import { ContentAgentService } from '../../content/content-agent.service.js';
+import { THREADS_FORMATS, type ThreadsFormat } from '../../content/prompts/threads.prompt.js';
 import type { BotContext } from '../../shared/interfaces/session.interface.js';
 
 const CONTACTS_PER_PAGE = 8;
@@ -237,26 +238,40 @@ export class CommandUpdate {
     await this.generateAndReply(ctx, topic);
   }
 
-  async generateAndReply(ctx: BotContext, topic: string): Promise<void> {
+  async generateAndReply(ctx: BotContext, topic: string, format: ThreadsFormat = 'auto'): Promise<void> {
     await ctx.reply('Generating...');
-    const { post, sources } = await this.contentAgent.generateThreads(topic);
+    const { post, sources } = await this.contentAgent.generateThreads(topic, format);
 
+    ctx.session ??= {} as BotContext['session'];
+    ctx.session.contentGen = {
+      lastGenerated: post,
+      lastTopic: topic,
+      lastFormat: format,
+      lastSources: sources,
+    };
+
+    await this.replyWithPost(ctx, post, sources);
+  }
+
+  replyWithPost(ctx: BotContext, post: string, sources: string[] = []): Promise<void> {
     const sourcesText = sources.length > 0
       ? `\n\n---\nBased on: ${sources.map((s) => `"${s}"`).join(', ')}`
       : '';
+
+    const formatButtons = Object.entries(THREADS_FORMATS).map(
+      ([key, label]) => Markup.button.callback(label, `gen_format:${key}`),
+    );
 
     const keyboard = Markup.inlineKeyboard([
       [
         Markup.button.callback('Regenerate', 'regen_threads'),
         Markup.button.callback('Save as draft', 'save_draft'),
       ],
+      formatButtons,
+      [Markup.button.callback('Save as example', 'save_example')],
     ]);
 
-    ctx.session ??= {} as BotContext['session'];
-    (ctx.session as Record<string, unknown>).lastGenerated = post;
-    (ctx.session as Record<string, unknown>).lastTopic = topic;
-
-    await ctx.reply(post + sourcesText, keyboard);
+    return ctx.reply(post + sourcesText, keyboard) as unknown as Promise<void>;
   }
 
   @Command('reindex')
