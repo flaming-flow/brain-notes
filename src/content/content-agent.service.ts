@@ -18,7 +18,6 @@ export class ContentAgentService {
     this.openai = new OpenAI({
       apiKey: this.config.getOrThrow<string>('ai.openai.apiKey'),
     });
-    // Use main model for content generation (can be overridden later)
     this.model = this.config.get<string>('ai.openai.model', 'gpt-4o-mini');
   }
 
@@ -29,7 +28,6 @@ export class ContentAgentService {
       return 'No relevant notes found.';
     }
 
-    // Fetch full content of relevant notes
     const context = await this.buildContext(results.map((r) => r.docId));
 
     const response = await this.openai.chat.completions.create({
@@ -54,6 +52,41 @@ export class ContentAgentService {
     return response.choices[0]?.message?.content?.trim() || 'No answer generated.';
   }
 
+  async suggestTopics(): Promise<string[]> {
+    const recentIds = await this.couchSync.listByPrefix('inbox/');
+    const last15 = recentIds.slice(-15);
+    const context = await this.buildContext(last15);
+
+    if (!context) return [];
+
+    const response = await this.openai.chat.completions.create({
+      model: this.model,
+      messages: [
+        {
+          role: 'system',
+          content:
+            'Based on the user\'s recent notes, suggest 5 engaging topics for a Threads post. ' +
+            'Each topic should be a short phrase (3-7 words) in the same language as the notes. ' +
+            'Focus on personal insights, reflections, and experiences — not generic advice. ' +
+            'Return ONLY a JSON array of strings, nothing else. Example: ["topic 1", "topic 2"]',
+        },
+        {
+          role: 'user',
+          content: context,
+        },
+      ],
+      max_tokens: 300,
+      temperature: 0.8,
+    });
+
+    try {
+      const raw = response.choices[0]?.message?.content?.trim() || '[]';
+      return JSON.parse(raw) as string[];
+    } catch {
+      return [];
+    }
+  }
+
   async generateThreads(topic: string): Promise<string> {
     let context: string;
 
@@ -63,12 +96,11 @@ export class ContentAgentService {
         ? await this.buildContext(results.map((r) => r.docId))
         : '';
     } else {
-      // No topic — use recent notes as inspiration
       const recentIds = await this.couchSync.listByPrefix('inbox/');
       const last10 = recentIds.slice(-10);
       context = await this.buildContext(last10);
       if (!context) {
-        return 'No notes yet to generate from. Send me some ideas first!';
+        return 'No notes yet. Send me some ideas first!';
       }
     }
 
@@ -78,22 +110,18 @@ export class ContentAgentService {
         {
           role: 'system',
           content:
-            'You are a content creator assistant for Threads (text-based social platform by Meta). ' +
-            'Create an engaging post based on the user\'s personal notes and the given topic.\n\n' +
-            'Rules:\n' +
-            '- Write in the same language as the topic (Russian or English)\n' +
-            '- Keep it under 500 characters (Threads limit)\n' +
-            '- Start with a strong hook (first line must grab attention)\n' +
-            '- Be authentic, personal, reflective — not corporate or generic\n' +
-            '- Use the user\'s own insights and experiences from their notes\n' +
-            '- End with a question or thought-provoking statement to drive engagement\n' +
-            '- No hashtags in the post body (can suggest 3-5 at the end separately)\n' +
-            '- Tone: thoughtful, real, slightly philosophical\n\n' +
-            'Format:\n' +
-            '[POST]\n' +
-            'The actual post text\n\n' +
-            '[HASHTAGS]\n' +
-            '#tag1 #tag2 #tag3',
+            'You are a personal content assistant. Write a Threads post.\n\n' +
+            'Style:\n' +
+            '- Authentic, personal, like talking to a friend\n' +
+            '- Use "I" perspective, share real feelings and insights\n' +
+            '- Short sentences, conversational rhythm\n' +
+            '- Start with a hook that makes people stop scrolling\n' +
+            '- End with a question that invites discussion\n' +
+            '- NO corporate/motivational speaker tone\n' +
+            '- NO cliches like "in today\'s world" or "it\'s important to"\n' +
+            '- Under 500 characters\n\n' +
+            'Write ONLY the post text. After the post, on a new line write hashtags (3-5, with #).\n' +
+            'Do NOT add labels like [POST] or [HASHTAGS].',
         },
         {
           role: 'user',
@@ -116,14 +144,13 @@ export class ContentAgentService {
         {
           role: 'system',
           content:
-            'You are a content editor for Threads. ' +
-            'Rewrite the post based on the user feedback. ' +
-            'Keep the same format: [POST] section + [HASHTAGS] section. ' +
-            'Keep it under 500 characters. Same language as original.',
+            'Rewrite this Threads post based on the feedback. ' +
+            'Keep the same authentic, personal style. Under 500 characters. ' +
+            'Write ONLY the post text + hashtags on new line. No labels.',
         },
         {
           role: 'user',
-          content: `Original post:\n${previousPost}\n\nFeedback: ${feedback}`,
+          content: `Post:\n${previousPost}\n\nChange: ${feedback}`,
         },
       ],
       max_tokens: 500,
@@ -140,7 +167,6 @@ export class ContentAgentService {
       const content = await this.couchSync.readFile(id);
       if (!content) continue;
 
-      // Strip frontmatter
       const bodyMatch = content.match(/^---\n[\s\S]*?\n---\n([\s\S]*)$/);
       const body = bodyMatch?.[1]?.trim() || content;
       const title = id.replace('.md', '').replace(/^[^/]+\//, '');

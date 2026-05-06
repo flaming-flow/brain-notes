@@ -315,6 +315,15 @@ export class ActionUpdate {
 
   // --- Content generation actions ---
 
+  @Action(/^gen_topic:(.+)$/)
+  async onGenTopic(@Ctx() ctx: BotContext): Promise<void> {
+    const callbackData = (ctx.callbackQuery as { data?: string })?.data;
+    const topic = callbackData?.replace('gen_topic:', '') || '';
+    await ctx.answerCbQuery();
+    await ctx.editMessageText(`Topic: ${topic}`);
+    await this.commandUpdate.generateAndReply(ctx, topic);
+  }
+
   @Action('regen_threads')
   async onRegenThreads(@Ctx() ctx: BotContext): Promise<void> {
     await ctx.answerCbQuery();

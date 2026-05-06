@@ -212,7 +212,30 @@ export class CommandUpdate {
 
     const topic = parts.slice(1).join(' ') || '';
 
-    await ctx.reply(topic ? 'Generating...' : 'Looking at your notes for inspiration...');
+    // No topic — suggest topics first
+    if (!topic) {
+      await ctx.reply('Looking at your notes...');
+      const topics = await this.contentAgent.suggestTopics();
+
+      if (topics.length === 0) {
+        await ctx.reply('No notes yet. Send me some ideas first!');
+        return;
+      }
+
+      const buttons = topics.map((t) => [
+        Markup.button.callback(t.slice(0, 60), `gen_topic:${t.slice(0, 60)}`),
+      ]);
+
+      const keyboard = Markup.inlineKeyboard(buttons);
+      await ctx.reply('Pick a topic or write your own:', keyboard);
+      return;
+    }
+
+    await this.generateAndReply(ctx, topic);
+  }
+
+  async generateAndReply(ctx: BotContext, topic: string): Promise<void> {
+    await ctx.reply('Generating...');
     const result = await this.contentAgent.generateThreads(topic);
 
     const keyboard = Markup.inlineKeyboard([
