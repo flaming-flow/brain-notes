@@ -53,9 +53,14 @@ export class ContentAgentService {
   }
 
   async suggestTopics(): Promise<string[]> {
-    const recentIds = await this.couchSync.listByPrefix('inbox/');
-    const last15 = recentIds.slice(-15);
-    const context = await this.buildContext(last15);
+    // Read ALL notes for topic suggestions
+    const allIds: string[] = [];
+    for (const prefix of ['inbox/', 'projects/']) {
+      const ids = await this.couchSync.listByPrefix(prefix);
+      allIds.push(...ids);
+    }
+    // Use last 30 for context (API token limit)
+    const context = await this.buildContext(allIds.slice(-30));
 
     if (!context) return [];
 
@@ -88,36 +93,18 @@ export class ContentAgentService {
   }
 
   async generateThreads(topic: string): Promise<{ post: string; sources: string[] }> {
-    let context: string;
-    let sourceIds: string[];
-
-    if (topic) {
-      const results = await this.embedding.searchSimilar(topic, 5);
-      sourceIds = results.map((r) => r.docId);
-      context = sourceIds.length > 0
-        ? await this.buildContext(sourceIds)
-        : '';
-    } else {
-      // No topic — pick a random recent topic via embeddings
-      const recentIds = await this.couchSync.listByPrefix('inbox/');
-      if (recentIds.length === 0) {
-        return { post: 'No notes yet. Send me some ideas first!', sources: [] };
-      }
-      // Pick a random recent note as seed, find similar ones
-      const seedId = recentIds[Math.floor(Math.random() * Math.min(recentIds.length, 10) + (recentIds.length - 10))];
-      const seedContent = await this.couchSync.readFile(seedId);
-      if (!seedContent) {
-        return { post: 'No notes yet. Send me some ideas first!', sources: [] };
-      }
-      const bodyMatch = seedContent.match(/^---\n[\s\S]*?\n---\n([\s\S]*)$/);
-      const seedBody = bodyMatch?.[1]?.trim() || seedContent;
-      const results = await this.embedding.searchSimilar(seedBody.slice(0, 200), 5);
-      sourceIds = results.map((r) => r.docId);
-      context = await this.buildContext(sourceIds);
+    if (!topic) {
+      return { post: 'Pick a topic first. Use /generate threads', sources: [] };
     }
 
+    const results = await this.embedding.searchSimilar(topic, 5);
+    const sourceIds = results.map((r) => r.docId);
+    const context = sourceIds.length > 0
+      ? await this.buildContext(sourceIds)
+      : '';
+
     if (!context) {
-      return { post: 'No relevant notes found.', sources: [] };
+      return { post: 'No relevant notes found for this topic. Try /reindex first.', sources: [] };
     }
 
     const sources = sourceIds
