@@ -49,7 +49,7 @@ export class PhotoUpdate {
 
       if (!caption) {
         // No caption: save immediately with minimal classification
-        const noteFileName = generateFileName('photo', today);
+        const noteFileName = generateFileName('photo');
         const markdown = this.tpl.render('note', {
           tags: [],
           life_area: null,

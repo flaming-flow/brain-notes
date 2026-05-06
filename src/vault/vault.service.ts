@@ -49,7 +49,7 @@ export class VaultService {
       ? `${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}`
       : null;
 
-    let fileName = generateFileName(classification.title, today);
+    let fileName = generateFileName(classification.title);
     let filePath: string;
 
     // Prepend forward attribution to content if forwarded
@@ -73,7 +73,7 @@ export class VaultService {
         const linkUrl = url || this.extractUrl(content) || '';
         if (!fileName || fileName === today) {
           const fetched = await fetchUrlTitle(linkUrl);
-          fileName = generateFileName(fetched || 'link', today);
+          fileName = generateFileName(fetched || 'link');
         }
         const bodyText = content.replace(linkUrl, '').trim();
         const markdown = this.tpl.render('link', {
@@ -265,7 +265,7 @@ export class VaultService {
     location?: { latitude: number; longitude: number },
   ): Promise<string> {
     const today = format(new Date(), 'yyyy-MM-dd');
-    const fileName = generateFileName(contactData.name, today);
+    const fileName = generateFileName(contactData.name);
 
     // Build contacts section
     const lines: string[] = [];
