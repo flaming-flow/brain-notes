@@ -5,6 +5,8 @@ import { AuthGuard } from '../guards/auth.guard.js';
 import { MessageProcessorService } from '../services/message-processor.service.js';
 import { VaultReaderService } from '../../vault/vault-reader.service.js';
 import { CouchDBSyncService } from '../../couchdb/couchdb-sync.service.js';
+import { EmbeddingService } from '../../vector/embedding.service.js';
+import { ContentAgentService } from '../../content/content-agent.service.js';
 import type { BotContext } from '../../shared/interfaces/session.interface.js';
 
 const CONTACTS_PER_PAGE = 8;
@@ -22,6 +24,8 @@ export class CommandUpdate {
     private readonly processor: MessageProcessorService,
     private readonly reader: VaultReaderService,
     private readonly couchSync: CouchDBSyncService,
+    private readonly embedding: EmbeddingService,
+    private readonly contentAgent: ContentAgentService,
   ) {}
 
   @Start()
@@ -164,6 +168,62 @@ export class CommandUpdate {
 
     const keyboard = Markup.inlineKeyboard(buttons);
     await ctx.reply(`Found ${results.length} result(s) for "${query}":`, keyboard);
+  }
+
+  @Command('ask')
+  async onAskCommand(@Ctx() ctx: BotContext): Promise<void> {
+    const message = ctx.message as unknown as { text?: string };
+    const text = message?.text || '';
+    const question = text.replace(/^\/ask\s*/i, '').trim();
+    if (!question) {
+      await ctx.reply('Usage: /ask your question');
+      return;
+    }
+
+    await ctx.reply('Thinking...');
+    const answer = await this.contentAgent.ask(question);
+    await ctx.reply(answer);
+  }
+
+  @Command('generate')
+  async onGenerateCommand(@Ctx() ctx: BotContext): Promise<void> {
+    const message = ctx.message as unknown as { text?: string };
+    const text = message?.text || '';
+    const args = text.replace(/^\/generate\s*/i, '').trim();
+
+    // Parse format and optional topic
+    const parts = args.split(/\s+/);
+    const format = (parts[0] || 'threads').toLowerCase();
+
+    if (format !== 'threads') {
+      await ctx.reply('Supported formats: threads\nUsage: /generate threads [topic]');
+      return;
+    }
+
+    const topic = parts.slice(1).join(' ') || '';
+
+    await ctx.reply(topic ? 'Generating...' : 'Looking at your notes for inspiration...');
+    const result = await this.contentAgent.generateThreads(topic);
+
+    const keyboard = Markup.inlineKeyboard([
+      [
+        Markup.button.callback('Regenerate', 'regen_threads'),
+        Markup.button.callback('Save as draft', 'save_draft'),
+      ],
+    ]);
+
+    ctx.session ??= {} as BotContext['session'];
+    (ctx.session as Record<string, unknown>).lastGenerated = result;
+    (ctx.session as Record<string, unknown>).lastTopic = topic;
+
+    await ctx.reply(result, keyboard);
+  }
+
+  @Command('reindex')
+  async onReindexCommand(@Ctx() ctx: BotContext): Promise<void> {
+    await ctx.reply('Reindexing all notes...');
+    const count = await this.embedding.indexAllNotes();
+    await ctx.reply(`Done. Indexed ${count} notes.`);
   }
 
   async showContactsPage(ctx: BotContext, page: number, edit = false): Promise<void> {

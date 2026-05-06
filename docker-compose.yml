@@ -10,10 +10,13 @@ services:
       - COUCHDB_USER=${COUCHDB_USER:-admin}
       - COUCHDB_PASSWORD=${COUCHDB_PASSWORD:-changeme}
       - COUCHDB_DB_NAME=${COUCHDB_DB_NAME:-obsidian-livesync}
+      - QDRANT_URL=http://qdrant:6333
     volumes:
       - ./vault:/app/vault
     depends_on:
       couchdb:
+        condition: service_healthy
+      qdrant:
         condition: service_healthy
 
   couchdb:
@@ -34,5 +37,18 @@ services:
       timeout: 5s
       retries: 10
 
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: nomad-brain-qdrant
+    restart: unless-stopped
+    volumes:
+      - qdrant-data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:6333/healthz || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   couchdb-data:
+  qdrant-data:

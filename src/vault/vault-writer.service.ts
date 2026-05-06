@@ -1,9 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Inject, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { LIFE_AREAS } from '../shared/constants/life-areas.constant.js';
 import { CouchDBSyncService } from '../couchdb/couchdb-sync.service.js';
+import { EmbeddingService } from '../vector/embedding.service.js';
 
 @Injectable()
 export class VaultWriterService {
@@ -13,6 +14,7 @@ export class VaultWriterService {
   constructor(
     private readonly config: ConfigService,
     private readonly couchSync: CouchDBSyncService,
+    @Optional() @Inject(EmbeddingService) private readonly embedding?: EmbeddingService,
   ) {
     this.basePath = this.config.getOrThrow<string>('vault.basePath');
   }
@@ -58,6 +60,7 @@ export class VaultWriterService {
     }
 
     await this.couchSync.writeFile(docId, content);
+    this.embedding?.indexNote(docId, content).catch(() => {});
     this.logger.log(`Written: ${docId}`);
     return docId;
   }
@@ -73,6 +76,7 @@ export class VaultWriterService {
 
   async deleteFile(filePath: string): Promise<void> {
     await this.couchSync.deleteFile(filePath);
+    this.embedding?.removeNote(filePath).catch(() => {});
     this.logger.log(`Deleted: ${filePath}`);
   }
 

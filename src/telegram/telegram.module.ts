@@ -14,6 +14,8 @@ import { LocationUpdate } from './updates/location.update.js';
 import { VaultModule } from '../vault/vault.module.js';
 import { AiModule } from '../ai/ai.module.js';
 import { CouchDBModule } from '../couchdb/couchdb.module.js';
+import { VectorModule } from '../vector/vector.module.js';
+import { ContentModule } from '../content/content.module.js';
 
 @Module({
   imports: [
@@ -28,6 +30,8 @@ import { CouchDBModule } from '../couchdb/couchdb.module.js';
     VaultModule,
     AiModule,
     CouchDBModule,
+    VectorModule,
+    ContentModule,
   ],
   providers: [
     MessageProcessorService,

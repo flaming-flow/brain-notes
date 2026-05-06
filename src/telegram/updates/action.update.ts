@@ -8,6 +8,7 @@ import { VaultService } from '../../vault/vault.service.js';
 import { VaultWriterService } from '../../vault/vault-writer.service.js';
 import { VaultReaderService } from '../../vault/vault-reader.service.js';
 import { CouchDBSyncService } from '../../couchdb/couchdb-sync.service.js';
+import { ContentAgentService } from '../../content/content-agent.service.js';
 import { TextUpdate } from './text.update.js';
 import { CommandUpdate } from './command.update.js';
 import type { BotContext } from '../../shared/interfaces/session.interface.js';
@@ -24,6 +25,7 @@ export class ActionUpdate {
     private readonly writer: VaultWriterService,
     private readonly reader: VaultReaderService,
     private readonly couchSync: CouchDBSyncService,
+    private readonly contentAgent: ContentAgentService,
     private readonly textUpdate: TextUpdate,
     private readonly commandUpdate: CommandUpdate,
   ) {}
@@ -300,6 +302,42 @@ export class ActionUpdate {
     };
 
     await ctx.editMessageText(`Editing: ${fileName}\n\nSend new text:`);
+  }
+
+  // --- Content generation actions ---
+
+  @Action('regen_threads')
+  async onRegenThreads(@Ctx() ctx: BotContext): Promise<void> {
+    await ctx.answerCbQuery('Regenerating...');
+    const topic = ((ctx.session as Record<string, unknown>)?.lastTopic as string) || '';
+    const result = await this.contentAgent.generateThreads(topic);
+    (ctx.session as Record<string, unknown>).lastGenerated = result;
+
+    const keyboard = Markup.inlineKeyboard([
+      [
+        Markup.button.callback('Regenerate', 'regen_threads'),
+        Markup.button.callback('Save as draft', 'save_draft'),
+      ],
+    ]);
+
+    await ctx.editMessageText(result, keyboard);
+  }
+
+  @Action('save_draft')
+  async onSaveDraft(@Ctx() ctx: BotContext): Promise<void> {
+    const content = (ctx.session as Record<string, unknown>)?.lastGenerated as string;
+    if (!content) {
+      await ctx.answerCbQuery('Nothing to save');
+      return;
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+    const markdown = `---\ntype: draft\ncontent_type: threads\ncreated: ${today}\nstatus: draft\n---\n\n${content}\n`;
+    await this.couchSync.writeFile(`drafts/threads-${Date.now()}.md`, markdown);
+
+    (ctx.session as Record<string, unknown>).lastGenerated = undefined;
+    await ctx.answerCbQuery('Saved!');
+    await ctx.editMessageText(`Draft saved\n\n${content}`);
   }
 
   // --- Cancel action (works for notes, contacts, voice, music) ---

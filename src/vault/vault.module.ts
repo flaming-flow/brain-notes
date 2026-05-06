@@ -4,9 +4,10 @@ import { VaultWriterService } from './vault-writer.service.js';
 import { VaultReaderService } from './vault-reader.service.js';
 import { TemplateService } from './services/template.service.js';
 import { CouchDBModule } from '../couchdb/couchdb.module.js';
+import { VectorModule } from '../vector/vector.module.js';
 
 @Module({
-  imports: [CouchDBModule],
+  imports: [CouchDBModule, VectorModule],
   providers: [VaultService, VaultWriterService, VaultReaderService, TemplateService],
   exports: [VaultService, VaultWriterService, VaultReaderService, TemplateService],
 })
