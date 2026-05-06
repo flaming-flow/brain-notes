@@ -59,8 +59,13 @@ export class ContentAgentService {
       const ids = await this.couchSync.listByPrefix(prefix);
       allIds.push(...ids);
     }
+
+    this.logger.log(`Found ${allIds.length} notes for topic suggestions`);
+
     // Use last 30 for context (API token limit)
     const context = await this.buildContext(allIds.slice(-30));
+
+    this.logger.log(`Built context: ${context.length} chars`);
 
     if (!context) return [];
 
