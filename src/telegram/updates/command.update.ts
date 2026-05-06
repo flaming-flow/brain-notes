@@ -40,12 +40,16 @@ export class CommandUpdate {
         '- Пересланное — сохраню с указанием источника\n' +
         '- Ссылки — сохраню как ресурс (несколько ссылок — батчем)\n' +
         '- Аудиофайл — транскрибирую\n\n' +
-        'Команды:\n' +
-        '/contact Имя — создать карточку контакта\n' +
-        '/contacts — список всех контактов\n' +
-        '/project Описание — создать проект\n' +
-        '/music Описание — музыкальная заметка\n' +
-        '/help — подробная справка',
+        'Commands:\n' +
+        '/contact Name — create contact\n' +
+        '/contacts — list contacts\n' +
+        '/search keyword — search notes\n' +
+        '/ask question — AI answers from your notes\n' +
+        '/generate threads [topic] — generate Threads post\n' +
+        '/project Description — create project\n' +
+        '/music Description — music note\n' +
+        '/reindex — reindex all notes for AI\n' +
+        '/help — full guide',
       MAIN_KEYBOARD,
     );
   }
@@ -58,16 +62,22 @@ export class CommandUpdate {
         '2. AI классифицирует и предложит теги\n' +
         '3. Нажимай теги чтобы выбрать/убрать\n' +
         '4. Нажми Save для сохранения\n\n' +
-        'Кнопки:\n' +
-        '+ Contact — быстрое создание контакта\n' +
-        'Contacts — список всех контактов\n\n' +
-        'Команды:\n' +
-        '/contact Имя — визард создания контакта\n' +
-        '/contacts — список контактов с пагинацией\n' +
-        '/project Описание — создать проект\n' +
-        '/music Описание — музыкальная заметка\n' +
-        '/music — режим записи (отправь аудио)\n' +
-        '/help — эта справка',
+        'Buttons:\n' +
+        '+ Contact — create contact\n' +
+        'Contacts — list contacts\n' +
+        'Event / Idea — quick templates\n' +
+        'Music — record audio\n\n' +
+        'Commands:\n' +
+        '/contact Name — contact wizard\n' +
+        '/contacts — contacts with pagination\n' +
+        '/search keyword — text search in notes\n' +
+        '/ask question — AI answers from your notes\n' +
+        '/generate threads [topic] — generate Threads post\n' +
+        '/generate threads — AI picks topic from notes\n' +
+        '/project Description — create project\n' +
+        '/music Description — music note\n' +
+        '/reindex — reindex all notes for AI search\n' +
+        '/help — this guide',
       MAIN_KEYBOARD,
     );
   }
