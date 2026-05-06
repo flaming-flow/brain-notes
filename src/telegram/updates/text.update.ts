@@ -345,15 +345,16 @@ export class TextUpdate {
 
     await ctx.reply('Regenerating...');
 
-    let result: string;
+    let post: string;
     if (text.toLowerCase() === 'ok') {
       const topic = (session.lastTopic as string) || '';
-      result = await this.contentAgent.generateThreads(topic);
+      const generated = await this.contentAgent.generateThreads(topic);
+      post = generated.post;
     } else {
-      result = await this.contentAgent.regenerateWithFeedback(previousPost, text);
+      post = await this.contentAgent.regenerateWithFeedback(previousPost, text);
     }
 
-    session.lastGenerated = result;
+    session.lastGenerated = post;
 
     const keyboard = Markup.inlineKeyboard([
       [
@@ -362,7 +363,7 @@ export class TextUpdate {
       ],
     ]);
 
-    await ctx.reply(result, keyboard);
+    await ctx.reply(post, keyboard);
   }
 
   private normalizeHandle(input: string, platform?: string): string {

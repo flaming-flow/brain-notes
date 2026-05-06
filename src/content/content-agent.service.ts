@@ -87,22 +87,28 @@ export class ContentAgentService {
     }
   }
 
-  async generateThreads(topic: string): Promise<string> {
+  async generateThreads(topic: string): Promise<{ post: string; sources: string[] }> {
     let context: string;
+    let sourceIds: string[];
 
     if (topic) {
       const results = await this.embedding.searchSimilar(topic, 8);
+      sourceIds = results.map((r) => r.docId);
       context = results.length > 0
-        ? await this.buildContext(results.map((r) => r.docId))
+        ? await this.buildContext(sourceIds)
         : '';
     } else {
       const recentIds = await this.couchSync.listByPrefix('inbox/');
-      const last10 = recentIds.slice(-10);
-      context = await this.buildContext(last10);
+      sourceIds = recentIds.slice(-10);
+      context = await this.buildContext(sourceIds);
       if (!context) {
-        return 'No notes yet. Send me some ideas first!';
+        return { post: 'No notes yet. Send me some ideas first!', sources: [] };
       }
     }
+
+    const sources = sourceIds
+      .filter((id) => id.endsWith('.md'))
+      .map((id) => id.replace('.md', '').replace(/^[^/]+\//, ''));
 
     const response = await this.openai.chat.completions.create({
       model: this.model,
@@ -134,7 +140,10 @@ export class ContentAgentService {
       temperature: 0.7,
     });
 
-    return response.choices[0]?.message?.content?.trim() || 'Failed to generate.';
+    return {
+      post: response.choices[0]?.message?.content?.trim() || 'Failed to generate.',
+      sources,
+    };
   }
 
   async regenerateWithFeedback(previousPost: string, feedback: string): Promise<string> {

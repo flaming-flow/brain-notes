@@ -239,7 +239,11 @@ export class CommandUpdate {
 
   async generateAndReply(ctx: BotContext, topic: string): Promise<void> {
     await ctx.reply('Generating...');
-    const result = await this.contentAgent.generateThreads(topic);
+    const { post, sources } = await this.contentAgent.generateThreads(topic);
+
+    const sourcesText = sources.length > 0
+      ? `\n\n---\nBased on: ${sources.map((s) => `"${s}"`).join(', ')}`
+      : '';
 
     const keyboard = Markup.inlineKeyboard([
       [
@@ -249,10 +253,10 @@ export class CommandUpdate {
     ]);
 
     ctx.session ??= {} as BotContext['session'];
-    (ctx.session as Record<string, unknown>).lastGenerated = result;
+    (ctx.session as Record<string, unknown>).lastGenerated = post;
     (ctx.session as Record<string, unknown>).lastTopic = topic;
 
-    await ctx.reply(result, keyboard);
+    await ctx.reply(post + sourcesText, keyboard);
   }
 
   @Command('reindex')
