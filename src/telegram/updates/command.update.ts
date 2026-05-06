@@ -192,8 +192,20 @@ export class CommandUpdate {
     }
 
     await ctx.reply('Thinking...');
-    const answer = await this.contentAgent.ask(question);
-    await ctx.reply(answer);
+    const { answer, sources } = await this.contentAgent.ask(question);
+
+    // Show contact buttons if contacts found in sources
+    const contactSources = sources.filter((s) => s.startsWith('contacts/'));
+    if (contactSources.length > 0) {
+      const buttons = contactSources.map((s) => {
+        const name = s.replace('contacts/', '').replace('.md', '');
+        return [Markup.button.callback(name, `view_contact:${name}`)];
+      });
+      const keyboard = Markup.inlineKeyboard(buttons);
+      await ctx.reply(answer, keyboard);
+    } else {
+      await ctx.reply(answer);
+    }
   }
 
   @Command('generate')

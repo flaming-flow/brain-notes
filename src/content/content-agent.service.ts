@@ -33,14 +33,15 @@ export class ContentAgentService {
     this.contentModel = this.config.get<string>('ai.openai.contentModel', 'gpt-4.1-mini');
   }
 
-  async ask(question: string): Promise<string> {
+  async ask(question: string): Promise<{ answer: string; sources: string[] }> {
     const results = await this.embedding.searchSimilar(question, 5);
 
     if (results.length === 0) {
-      return 'No relevant notes found.';
+      return { answer: 'No relevant notes found.', sources: [] };
     }
 
-    const context = await this.buildContext(results.map((r) => r.docId));
+    const sourceIds = results.map((r) => r.docId);
+    const context = await this.buildContext(sourceIds);
 
     const response = await this.openai.chat.completions.create({
       model: this.model,
@@ -61,7 +62,10 @@ export class ContentAgentService {
       temperature: 0.5,
     });
 
-    return response.choices[0]?.message?.content?.trim() || 'No answer generated.';
+    return {
+      answer: response.choices[0]?.message?.content?.trim() || 'No answer generated.',
+      sources: sourceIds,
+    };
   }
 
   async suggestTopics(): Promise<string[]> {
