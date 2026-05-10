@@ -5,6 +5,7 @@ import { AuthGuard } from '../guards/auth.guard.js';
 import { VoiceService } from '../services/voice.service.js';
 import { MessageProcessorService } from '../services/message-processor.service.js';
 import { VaultWriterService } from '../../vault/vault-writer.service.js';
+import { CouchDBSyncService } from '../../couchdb/couchdb-sync.service.js';
 import { parseVoiceCommand } from '../utils/voice-command.util.js';
 import type { BotContext } from '../../shared/interfaces/session.interface.js';
 import { format } from 'date-fns';
@@ -18,6 +19,7 @@ export class VoiceUpdate {
     private readonly voice: VoiceService,
     private readonly processor: MessageProcessorService,
     private readonly writer: VaultWriterService,
+    private readonly couchSync: CouchDBSyncService,
   ) {}
 
   @On('voice')
@@ -30,6 +32,45 @@ export class VoiceUpdate {
 
     const chatId = ctx.chat?.id;
     if (!chatId) return;
+
+    // Check if replying to a saved note — voice append
+    const replyTo = message?.reply_to_message as unknown as Record<string, unknown> | undefined;
+    const replyText = (replyTo?.text as string) || '';
+    const savedMatch = replyText.match(/Saved:\s*(.+?)(?:\n|$)/);
+
+    if (savedMatch) {
+      await ctx.reply('Transcribing for edit...');
+      const fileLink = await ctx.telegram.getFileLink(voiceData.file_id);
+      this.voice.transcribe(fileLink.href).then(
+        async (rawText) => {
+          const fileName = savedMatch[1].trim();
+          let filePath: string | undefined;
+          for (const folder of ['inbox', 'contacts', 'projects']) {
+            const docId = `${folder}/${fileName}.md`;
+            const content = await this.couchSync.readFile(docId);
+            if (content) { filePath = docId; break; }
+          }
+          if (!filePath) {
+            await ctx.telegram.sendMessage(chatId, 'Note not found.');
+            return;
+          }
+          ctx.session ??= {} as BotContext['session'];
+          ctx.session.pendingEdit = { text: rawText, filePath, fileName };
+          const keyboard = Markup.inlineKeyboard([
+            [
+              Markup.button.callback('Append', 'edit_append'),
+              Markup.button.callback('Replace', 'edit_replace'),
+              Markup.button.callback('Cancel', 'cancel'),
+            ],
+          ]);
+          await ctx.telegram.sendMessage(chatId, `"${rawText}"\n\n"${fileName}" — Append or replace?`, { reply_markup: keyboard.reply_markup });
+        },
+        async (error) => {
+          await ctx.telegram.sendMessage(chatId, `Voice error: ${(error as Error).message}`);
+        },
+      );
+      return;
+    }
 
     await ctx.reply('Got it, processing...');
 

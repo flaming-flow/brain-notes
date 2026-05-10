@@ -356,15 +356,10 @@ export class TextUpdate {
       }
     }
 
-    // Fallback to lastSave if can't find by reply text
-    if (!filePath) {
-      const lastSave = ctx.session?.lastSave;
-      if (!lastSave) return false;
-      filePath = lastSave.filePath;
-      fileName = lastSave.fileName;
+    if (!filePath || !fileName) {
+      await ctx.reply('Note not found. Reply to a "Saved: ..." message to edit.');
+      return true;
     }
-
-    if (!filePath || !fileName) return false;
 
     ctx.session ??= {} as BotContext['session'];
     ctx.session.pendingEdit = { text, filePath, fileName };
