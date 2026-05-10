@@ -132,10 +132,99 @@ export class ActionUpdate {
 
       await ctx.answerCbQuery('Saved!');
       await ctx.editMessageText(confirmText, undoKeyboard);
+
+      // Check for mentioned people → suggest creating contacts
+      const people = pending.classification.mentionedPeople;
+      if (people?.length && pending.classification.entityType !== 'contact') {
+        await this.suggestPeopleContacts(ctx, people, filePath);
+      }
     } catch (error) {
       this.logger.error(`Error saving: ${error}`);
       await ctx.answerCbQuery('Error saving');
     }
+  }
+
+  private async suggestPeopleContacts(
+    ctx: BotContext,
+    people: string[],
+    noteDocId: string,
+  ): Promise<void> {
+    for (const name of people) {
+      // Check if contact already exists
+      const contacts = await this.couchSync.listByPrefix('contacts/');
+      const nameLower = name.toLowerCase();
+      const existing = contacts.filter((c) => {
+        const contactName = c.replace('contacts/', '').replace('.md', '').toLowerCase();
+        return contactName.includes(nameLower) || nameLower.includes(contactName);
+      });
+
+      if (existing.length > 0) {
+        // Contact exists — offer to link
+        const buttons = existing.map((c) => {
+          const cName = c.replace('contacts/', '').replace('.md', '');
+          return [Markup.button.callback(`Link ${cName}`, `link_contact:${cName}:${noteDocId}`)];
+        });
+        buttons.push([Markup.button.callback(`New "${name}"`, `new_contact:${name}`)]);
+        buttons.push([Markup.button.callback('Skip', 'noop')]);
+        const keyboard = Markup.inlineKeyboard(buttons);
+        await ctx.reply(`"${name}" mentioned. Link to existing contact or create new?`, keyboard);
+      } else {
+        // No contact — offer to create
+        const keyboard = Markup.inlineKeyboard([
+          [
+            Markup.button.callback(`Add "${name}" to contacts`, `new_contact:${name}`),
+            Markup.button.callback('Skip', 'noop'),
+          ],
+        ]);
+        await ctx.reply(`"${name}" mentioned but not in contacts. Add?`, keyboard);
+      }
+    }
+  }
+
+  // --- People mention actions ---
+
+  @Action(/^new_contact:(.+)$/)
+  async onNewContact(@Ctx() ctx: BotContext): Promise<void> {
+    const callbackData = (ctx.callbackQuery as { data?: string })?.data;
+    const name = callbackData?.replace('new_contact:', '') || '';
+    await ctx.answerCbQuery();
+    await ctx.editMessageText(`Adding ${name} to contacts...`);
+
+    ctx.session ??= {} as BotContext['session'];
+    ctx.session.pendingContact = {
+      step: 'phone',
+      name,
+      platforms: {},
+    };
+
+    const keyboard = Markup.inlineKeyboard([
+      [
+        Markup.button.callback('Skip', 'contact_skip'),
+        Markup.button.callback('Cancel', 'cancel'),
+      ],
+    ]);
+    await ctx.reply(`Contact: ${name}\n\nPhone number?`, keyboard);
+  }
+
+  @Action(/^link_contact:(.+):(.+)$/)
+  async onLinkContact(@Ctx() ctx: BotContext): Promise<void> {
+    const callbackData = (ctx.callbackQuery as { data?: string })?.data;
+    const match = callbackData?.match(/^link_contact:([^:]+):(.+)$/);
+    if (!match) return;
+
+    const contactName = match[1];
+    const noteDocId = match[2];
+
+    await ctx.answerCbQuery();
+
+    // Append wikilink to the note
+    const noteContent = await this.couchSync.readFile(noteDocId);
+    if (noteContent && !noteContent.includes(`[[${contactName}]]`)) {
+      const updated = noteContent.trimEnd() + `\n\n[[${contactName}]]\n`;
+      await this.couchSync.writeFile(noteDocId, updated);
+    }
+
+    await ctx.editMessageText(`Linked [[${contactName}]] to note.`);
   }
 
   // --- Contact wizard actions ---

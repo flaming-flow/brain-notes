@@ -101,6 +101,9 @@ export class AiService {
         relatedNotes: Array.isArray(raw.relatedNotes)
           ? raw.relatedNotes.filter((i: unknown) => typeof i === 'string')
           : undefined,
+        mentionedPeople: Array.isArray(raw.mentionedPeople)
+          ? raw.mentionedPeople.filter((i: unknown) => typeof i === 'string')
+          : undefined,
       };
       this.logger.log(`Classified as ${parsed.entityType} [${parsed.lifeArea}]: ${parsed.title}`);
       return parsed;

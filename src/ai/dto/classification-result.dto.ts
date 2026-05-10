@@ -31,4 +31,5 @@ export interface ClassificationResult {
     lifeAreas?: string[];
   };
   relatedNotes?: string[];
+  mentionedPeople?: string[];
 }
