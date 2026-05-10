@@ -5,3 +5,4 @@ dist/
 *.js.map
 coverage/
 .DS_Store
+CLAUDE.md
