@@ -41,7 +41,9 @@ export interface PendingVoice {
 export interface PendingMusic {
   awaitingAudio?: boolean;
   audioFileName?: string;
+  awaitingTitle?: boolean;
   awaitingDescription?: boolean;
+  title?: string;
 }
 
 export interface PendingEdit {
@@ -65,6 +67,11 @@ export interface ContentGeneration {
   awaitingRegenPrompt?: boolean;
 }
 
+export interface SavedNoteRef {
+  filePath: string;
+  fileName: string;
+}
+
 export interface BotSession {
   pendingNote?: PendingNote;
   pendingContact?: PendingContact;
@@ -72,6 +79,7 @@ export interface BotSession {
   pendingMusic?: PendingMusic;
   pendingEdit?: PendingEdit;
   lastSave?: LastSave;
+  savedNotes?: Record<number, SavedNoteRef>; // message_id → note ref
   lastLocation?: SavedLocation;
   templateHint?: 'note' | 'event';
   contentGen?: ContentGeneration;

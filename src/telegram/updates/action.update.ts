@@ -399,12 +399,33 @@ export class ActionUpdate {
 
   // --- Music actions ---
 
+  @Action('music_skip_title')
+  async onMusicSkipTitle(@Ctx() ctx: BotContext): Promise<void> {
+    const pending = ctx.session?.pendingMusic;
+    if (!pending) return;
+
+    await ctx.answerCbQuery();
+
+    // Auto-name: track-1, track-2, etc.
+    const existingTracks = await this.couchSync.listByPrefix('inbox/track-');
+    const trackNum = existingTracks.length + 1;
+    pending.title = `track-${trackNum}`;
+    pending.awaitingTitle = false;
+    pending.awaitingDescription = true;
+
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('Skip', 'music_skip_desc')],
+    ]);
+    await ctx.editMessageText(`Title: ${pending.title}\n\nAdd a description?`, keyboard);
+  }
+
   @Action('music_skip_desc')
   async onMusicSkipDesc(@Ctx() ctx: BotContext): Promise<void> {
     const pending = ctx.session?.pendingMusic;
     if (!pending?.audioFileName) return;
 
     const audioFileName = pending.audioFileName;
+    const title = pending.title || 'music-idea';
     ctx.session.pendingMusic = undefined;
 
     await ctx.answerCbQuery();
@@ -413,7 +434,7 @@ export class ActionUpdate {
       content: '',
       classification: {
         entityType: 'music',
-        title: 'music-idea',
+        title,
         suggestedTags: ['sketch'],
         lifeArea: 'music',
         confidence: 0.8,

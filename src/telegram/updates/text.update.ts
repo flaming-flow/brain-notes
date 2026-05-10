@@ -7,6 +7,7 @@ import { VaultService } from '../../vault/vault.service.js';
 import { VaultWriterService } from '../../vault/vault-writer.service.js';
 import { CommandUpdate } from './command.update.js';
 import { ContentAgentService } from '../../content/content-agent.service.js';
+import { CouchDBSyncService } from '../../couchdb/couchdb-sync.service.js';
 import type { BotContext } from '../../shared/interfaces/session.interface.js';
 import type { ForwardMetadata } from '../../shared/interfaces/forward-metadata.interface.js';
 
@@ -21,6 +22,7 @@ export class TextUpdate {
     private readonly writer: VaultWriterService,
     private readonly commandUpdate: CommandUpdate,
     private readonly contentAgent: ContentAgentService,
+    private readonly couchSync: CouchDBSyncService,
   ) {}
 
   @On('text')
@@ -79,7 +81,19 @@ export class TextUpdate {
         return;
       }
 
-      // 1. Music description input
+      // 1a. Music title input
+      if (ctx.session?.pendingMusic?.awaitingTitle) {
+        ctx.session.pendingMusic.awaitingTitle = false;
+        ctx.session.pendingMusic.title = text.trim();
+        ctx.session.pendingMusic.awaitingDescription = true;
+        const keyboard = Markup.inlineKeyboard([
+          [Markup.button.callback('Skip', 'music_skip_desc')],
+        ]);
+        await ctx.reply(`Title: ${text.trim()}\n\nAdd a description?`, keyboard);
+        return;
+      }
+
+      // 1b. Music description input
       if (ctx.session?.pendingMusic?.awaitingDescription) {
         await this.handleMusicDescription(ctx, text);
         return;
@@ -132,13 +146,14 @@ export class TextUpdate {
   private async handleMusicDescription(ctx: BotContext, text: string): Promise<void> {
     const pending = ctx.session.pendingMusic!;
     const audioFileName = pending.audioFileName;
+    const title = pending.title || text.slice(0, 50);
     ctx.session.pendingMusic = undefined;
 
     ctx.session.pendingNote = {
       content: text,
       classification: {
         entityType: 'music',
-        title: text.slice(0, 50),
+        title,
         suggestedTags: ['sketch'],
         lifeArea: 'music',
         confidence: 0.8,
@@ -320,11 +335,39 @@ export class TextUpdate {
     const replyTo = message?.reply_to_message as unknown as Record<string, unknown> | undefined;
     if (!replyTo) return false;
 
-    const lastSave = ctx.session?.lastSave;
-    if (!lastSave) return false;
+    // Extract note name from replied message text ("Saved: filename\n...")
+    const replyText = (replyTo.text as string) || '';
+    const savedMatch = replyText.match(/Saved:\s*(.+?)(?:\n|$)/);
+
+    let filePath: string | undefined;
+    let fileName: string | undefined;
+
+    if (savedMatch) {
+      // Found "Saved: filename" in replied message — find this note
+      fileName = savedMatch[1].trim();
+      // Search in common folders
+      for (const folder of ['inbox', 'contacts', 'projects']) {
+        const docId = `${folder}/${fileName}.md`;
+        const content = await this.couchSync.readFile(docId);
+        if (content) {
+          filePath = docId;
+          break;
+        }
+      }
+    }
+
+    // Fallback to lastSave if can't find by reply text
+    if (!filePath) {
+      const lastSave = ctx.session?.lastSave;
+      if (!lastSave) return false;
+      filePath = lastSave.filePath;
+      fileName = lastSave.fileName;
+    }
+
+    if (!filePath || !fileName) return false;
 
     ctx.session ??= {} as BotContext['session'];
-    ctx.session.pendingEdit = { text, filePath: lastSave.filePath, fileName: lastSave.fileName };
+    ctx.session.pendingEdit = { text, filePath, fileName };
 
     const keyboard = Markup.inlineKeyboard([
       [
@@ -334,7 +377,7 @@ export class TextUpdate {
       ],
     ]);
 
-    await ctx.reply(`"${lastSave.fileName}"\n\nAppend or replace body?`, keyboard);
+    await ctx.reply(`"${fileName}"\n\nAppend or replace body?`, keyboard);
     return true;
   }
 

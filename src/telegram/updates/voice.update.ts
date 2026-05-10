@@ -90,14 +90,14 @@ export class VoiceUpdate {
 
       ctx.session.pendingMusic = {
         audioFileName,
-        awaitingDescription: true,
+        awaitingTitle: true,
       };
 
       const keyboard = Markup.inlineKeyboard([
-        [Markup.button.callback('Skip', 'music_skip_desc')],
+        [Markup.button.callback('Skip', 'music_skip_title')],
       ]);
 
-      await ctx.reply('Audio saved. Add a description?', keyboard);
+      await ctx.reply('Audio saved. Give it a title?', keyboard);
     } catch (error) {
       this.logger.error(`Music audio error: ${error}`);
       ctx.session.pendingMusic = undefined;
