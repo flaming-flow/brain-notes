@@ -139,16 +139,21 @@ export class VoiceUpdate {
       const audioFileName = `${today}-music-${Date.now()}${ext}`;
       await this.writer.saveAttachment(audioFileName, audioBuffer);
 
+      // Auto-name: track-1, track-2...
+      const existingTracks = await this.couchSync.listByPrefix('inbox/track-');
+      const trackNum = existingTracks.length + 1;
+
       ctx.session.pendingMusic = {
         audioFileName,
-        awaitingTitle: true,
+        title: `track-${trackNum}`,
+        awaitingDescription: true,
       };
 
       const keyboard = Markup.inlineKeyboard([
-        [Markup.button.callback('Skip', 'music_skip_title')],
+        [Markup.button.callback('Skip', 'music_skip_desc')],
       ]);
 
-      await ctx.reply('Audio saved. Give it a title?', keyboard);
+      await ctx.reply(`Audio saved as track-${trackNum}. Add a description?`, keyboard);
     } catch (error) {
       this.logger.error(`Music audio error: ${error}`);
       ctx.session.pendingMusic = undefined;
