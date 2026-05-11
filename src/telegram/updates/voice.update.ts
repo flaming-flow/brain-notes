@@ -33,6 +33,16 @@ export class VoiceUpdate {
     const chatId = ctx.chat?.id;
     if (!chatId) return;
 
+    // Music mode: save voice as audio, no transcription
+    if (ctx.session?.pendingMusic?.awaitingAudio) {
+      await this.handleMusicAudio(ctx, {
+        file_id: voiceData.file_id,
+        file_name: undefined,
+        mime_type: 'audio/ogg',
+      });
+      return;
+    }
+
     // Check if replying to a saved note — voice append
     const replyTo = message?.reply_to_message as unknown as Record<string, unknown> | undefined;
     const replyText = (replyTo?.text as string) || '';
