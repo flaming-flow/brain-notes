@@ -94,9 +94,10 @@ export class VaultWriterService {
 
   async saveAttachment(fileName: string, data: Buffer): Promise<string> {
     // Save to CouchDB as base64 encoded content for LiveSync
+    // Pass original binary size so LiveSync metadata matches the real file
     const docId = `attachments/${fileName}`;
     const base64Content = data.toString('base64');
-    await this.couchSync.writeFile(docId, base64Content);
+    await this.couchSync.writeFile(docId, base64Content, data.length);
     this.logger.log(`Attachment saved to CouchDB: ${docId}`);
 
     // Also save to filesystem as backup

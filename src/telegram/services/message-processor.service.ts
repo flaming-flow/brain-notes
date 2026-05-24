@@ -11,6 +11,7 @@ interface ProcessOptions {
   sourceType?: 'text' | 'voice' | 'forward' | 'photo' | 'audio';
   forwardMeta?: ForwardMetadata;
   imageFileName?: string;
+  audioFileName?: string;
   hintEntityType?:
     | 'note'
     | 'link'
@@ -127,6 +128,7 @@ export class MessageProcessorService {
       sourceType: options.sourceType,
       forwardMeta: options.forwardMeta,
       imageFileName: options.imageFileName,
+      audioFileName: options.audioFileName,
     };
 
     await this.showTagKeyboard(ctx);

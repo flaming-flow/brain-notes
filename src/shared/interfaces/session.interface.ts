@@ -12,6 +12,7 @@ export interface PendingNote {
   sourceType?: 'text' | 'voice' | 'forward' | 'photo' | 'audio';
   forwardMeta?: ForwardMetadata;
   imageFileName?: string;
+  audioFileName?: string;
 }
 
 export interface PendingContact {
@@ -36,6 +37,8 @@ export interface PendingVoice {
   text: string;
   hintEntityType?: 'note' | 'link' | 'task' | 'contact' | 'event' | 'music' | 'project';
   waitingForEdit?: boolean;
+  voiceFileId?: string;
+  withAudio?: boolean;
 }
 
 export interface PendingMusic {

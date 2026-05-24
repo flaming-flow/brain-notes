@@ -13,6 +13,7 @@ import type { ThreadsFormat } from '../../content/prompts/threads.prompt.js';
 import { TextUpdate } from './text.update.js';
 import { CommandUpdate } from './command.update.js';
 import type { BotContext } from '../../shared/interfaces/session.interface.js';
+import { format } from 'date-fns';
 
 @Update()
 @UseGuards(AuthGuard)
@@ -107,6 +108,7 @@ export class ActionUpdate {
         pending.imageFileName,
         ctx.session?.lastLocation,
         pending.selectedAreas,
+        pending.audioFileName,
       );
 
       const fileName = filePath.split('/').pop()?.replace('.md', '') || filePath;
@@ -673,6 +675,39 @@ export class ActionUpdate {
     pending.waitingForEdit = true;
     await ctx.answerCbQuery();
     await ctx.editMessageText(`Edit text:\n"${pending.text}"\n\nSend corrected text:`);
+  }
+
+  @Action('voice_with_audio')
+  async onVoiceWithAudio(@Ctx() ctx: BotContext): Promise<void> {
+    const pending = ctx.session?.pendingVoice;
+    if (!pending?.voiceFileId) return;
+
+    await ctx.answerCbQuery('Saving audio...');
+
+    try {
+      const fileLink = await ctx.telegram.getFileLink(pending.voiceFileId);
+      const response = await fetch(fileLink.href);
+      const audioBuffer = Buffer.from(await response.arrayBuffer());
+
+      const today = format(new Date(), 'yyyy-MM-dd');
+      const audioFileName = `${today}-voice-${Date.now()}.ogg`;
+      await this.writer.saveAttachment(audioFileName, audioBuffer);
+
+      pending.withAudio = true;
+      const { text, hintEntityType } = pending;
+      ctx.session.pendingVoice = undefined;
+
+      await ctx.editMessageText(`"${text}" + audio`);
+
+      await this.processor.processMessage(ctx, text, {
+        sourceType: 'voice',
+        hintEntityType,
+        audioFileName,
+      });
+    } catch (err) {
+      this.logger.error(`Voice audio save failed: ${err}`);
+      await ctx.editMessageText(`Error saving audio. Text preserved:\n"${pending.text}"`);
+    }
   }
 
   @Action('undo_save')

@@ -99,6 +99,7 @@ export class CouchDBSyncService implements OnModuleInit {
   async writeFile(
     filePath: string,
     content: string,
+    originalSize?: number,
   ): Promise<{ metaId: string; leafId: string }> {
     const now = Date.now();
 
@@ -118,6 +119,8 @@ export class CouchDBSyncService implements OnModuleInit {
     }
 
     // Create/update metadata document
+    // For binary files (attachments), originalSize is the real file size;
+    // for text files, compute from content.
     const metaDoc: Record<string, unknown> = {
       _id: filePath,
       type: 'plain',
@@ -125,7 +128,7 @@ export class CouchDBSyncService implements OnModuleInit {
       children: [leafId],
       ctime,
       mtime: now,
-      size: Buffer.byteLength(content, 'utf8'),
+      size: originalSize ?? Buffer.byteLength(content, 'utf8'),
       eden: {},
     };
 

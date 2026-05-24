@@ -88,7 +88,7 @@ export class VoiceUpdate {
     const fileLink = await ctx.telegram.getFileLink(voiceData.file_id);
     this.voice.transcribe(fileLink.href).then(
       async (rawText) => {
-        await this.showTranscriptionPreview(ctx, rawText);
+        await this.showTranscriptionPreview(ctx, rawText, voiceData.file_id);
       },
       async (error) => {
         this.logger.error(`Voice processing error: ${error}`);
@@ -173,27 +173,31 @@ export class VoiceUpdate {
     return '.mp3';
   }
 
-  private async showTranscriptionPreview(ctx: BotContext, rawText: string): Promise<void> {
+  private async showTranscriptionPreview(ctx: BotContext, rawText: string, voiceFileId?: string): Promise<void> {
     const { entityType, cleanedText } = parseVoiceCommand(rawText);
 
     ctx.session ??= {} as BotContext['session'];
     ctx.session.pendingVoice = {
       text: cleanedText,
       hintEntityType: entityType,
+      voiceFileId,
     };
 
     const header = entityType
       ? `Voice command: ${entityType}`
       : 'Transcribed';
 
-    const keyboard = Markup.inlineKeyboard([
+    const buttons = [
       [
         Markup.button.callback('OK', 'voice_ok'),
         Markup.button.callback('Polish', 'voice_polish'),
         Markup.button.callback('Edit', 'voice_edit'),
       ],
-    ]);
+    ];
+    if (voiceFileId) {
+      buttons.push([Markup.button.callback('Save with audio', 'voice_with_audio')]);
+    }
 
-    await ctx.reply(`${header}\n"${cleanedText}"`, keyboard);
+    await ctx.reply(`${header}\n"${cleanedText}"`, Markup.inlineKeyboard(buttons));
   }
 }
