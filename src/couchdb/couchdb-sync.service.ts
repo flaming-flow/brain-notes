@@ -121,9 +121,11 @@ export class CouchDBSyncService implements OnModuleInit {
     // Create/update metadata document
     // For binary files (attachments), originalSize is the real file size;
     // for text files, compute from content.
+    // Use "newnote" for new docs so LiveSync creates the file in the vault;
+    // use "plain" for updates to existing docs.
     const metaDoc: Record<string, unknown> = {
       _id: filePath,
-      type: 'plain',
+      type: existingMeta ? 'plain' : 'newnote',
       path: filePath,
       children: [leafId],
       ctime,
