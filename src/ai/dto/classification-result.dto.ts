@@ -4,10 +4,15 @@ export interface ClassificationResult {
   suggestedTags: string[];
   lifeArea: string;
   confidence: number;
+  source?: 'own' | 'quote';
   dueDate?: string;
   priority?: 'high' | 'medium' | 'low';
   recurrence?: string;
   items?: string[];
+  quoteData?: {
+    author?: string;
+    bookTitle?: string;
+  };
   contactData?: {
     name: string;
     context?: string;

@@ -223,13 +223,32 @@ export class VaultService {
       default: {
         const extra: Record<string, unknown> = {};
         if (forwardMeta) {
-          extra.source = forwardMeta.sourceName;
-          extra.source_type = forwardMeta.sourceType;
-          if (forwardMeta.sourceUsername) extra.source_username = forwardMeta.sourceUsername;
+          extra.forwarded_from = forwardMeta.sourceName;
+          extra.forwarded_type = forwardMeta.sourceType;
+          if (forwardMeta.sourceUsername) extra.forwarded_username = forwardMeta.sourceUsername;
           if (forwardMeta.forwardDate) extra.forward_date = forwardMeta.forwardDate;
         }
         if (imageFileName) {
           extra.has_attachment = true;
+        }
+
+        const isQuote = classification.source === 'quote';
+        const author = classification.quoteData?.author;
+        const bookTitle = classification.quoteData?.bookTitle;
+        const bookSlug = bookTitle ? generateFileName(bookTitle) : null;
+
+        let noteBody = finalContent;
+        if (isQuote) {
+          const quoted = finalContent
+            .split('\n')
+            .map((line) => `> ${line}`)
+            .join('\n');
+          const attribution = [author, bookTitle ? `*${bookTitle}*` : null]
+            .filter(Boolean)
+            .join(', ');
+          const attributionLine = attribution ? `\n\n— ${attribution}` : '';
+          const backlink = bookSlug ? `\n\n[[${bookSlug}]]` : '';
+          noteBody = `${quoted}${attributionLine}${backlink}`;
         }
 
         const markdown = this.tpl.render('note', {
@@ -237,9 +256,16 @@ export class VaultService {
           life_area: lifeArea || null,
           geo: loc,
           created: today,
+          source: classification.source || 'own',
+          author: author || null,
+          book_title: bookTitle || null,
           ...extra,
-        }, finalContent);
+        }, noteBody);
         filePath = await this.writer.writeFile('inbox', fileName, markdown);
+
+        if (isQuote && bookTitle) {
+          await this.writer.appendToBookNote(bookTitle, author, `[[${fileName}]]`);
+        }
         break;
       }
     }

@@ -122,6 +122,31 @@ export class MessageProcessorService {
       return;
     }
 
+    // Quotes (own/external is the AI's call): save instantly with Undo + a
+    // source toggle, bypassing the tag keyboard. Book linking happens on write.
+    if (classification.entityType === 'note' && classification.source === 'quote') {
+      const filePath = await this.vault.createFromClassification(
+        text,
+        classification,
+        url,
+        options.forwardMeta,
+        options.imageFileName,
+        ctx.session?.lastLocation,
+        undefined,
+        options.audioFileName,
+      );
+      const fileName = filePath.split('/').pop()?.replace('.md', '') || filePath;
+      const book = classification.quoteData?.bookTitle;
+      this.storeLastSave(ctx, filePath, 'inbox', fileName, classification.lifeArea, 'quote', book);
+
+      const attribution = [classification.quoteData?.author, book ? `«${book}»` : null]
+        .filter(Boolean)
+        .join(', ');
+      const header = attribution ? `Quote saved — ${attribution}` : 'Quote saved';
+      await ctx.reply(header, this.buildPostSaveKeyboard('quote'));
+      return;
+    }
+
     // Interactive types: note, link, event — rank vocabulary by relevance,
     // pre-select the fitting existing tags, then show the tag keyboard.
     ctx.session ??= {};
@@ -355,6 +380,8 @@ export class MessageProcessorService {
     folder: string,
     fileName: string,
     lifeArea?: string,
+    source?: 'own' | 'quote',
+    book?: string,
   ): void {
     ctx.session ??= {};
     ctx.session.lastSave = {
@@ -362,7 +389,20 @@ export class MessageProcessorService {
       folder,
       fileName,
       lifeArea,
+      source,
+      book,
       timestamp: Date.now(),
     };
+  }
+
+  // Post-save keyboard: Undo + a one-tap source corrector (own ↔ quote).
+  buildPostSaveKeyboard(source: 'own' | 'quote' = 'own') {
+    const toggleLabel = source === 'quote' ? 'Это моё' : 'Это цитата';
+    return Markup.inlineKeyboard([
+      [
+        Markup.button.callback('Undo (60s)', 'undo_save'),
+        Markup.button.callback(toggleLabel, 'toggle_source'),
+      ],
+    ]);
   }
 }

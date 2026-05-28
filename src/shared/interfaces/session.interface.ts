@@ -35,6 +35,8 @@ export interface LastSave {
   folder: string;
   fileName: string;
   lifeArea?: string;
+  source?: 'own' | 'quote';
+  book?: string;
   timestamp: number;
 }
 

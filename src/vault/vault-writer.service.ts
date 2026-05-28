@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { LIFE_AREAS } from '../shared/constants/life-areas.constant.js';
 import { CouchDBSyncService } from '../couchdb/couchdb-sync.service.js';
 import { EmbeddingService } from '../vector/embedding.service.js';
+import { generateFileName } from './utils/slug.util.js';
 
 @Injectable()
 export class VaultWriterService {
@@ -88,6 +89,41 @@ export class VaultWriterService {
       if (updated !== content) {
         await this.couchSync.writeFile(docId, updated);
         this.logger.log(`Removed from MOC-${lifeArea}: ${wikilink}`);
+      }
+    }
+  }
+
+  // Book notes aggregate all quotes from a book (like a MOC). Stable id, no
+  // collision suffix, so repeated quotes from the same book share one note.
+  async appendToBookNote(bookTitle: string, author: string | undefined, wikilink: string): Promise<void> {
+    const slug = generateFileName(bookTitle);
+    if (!slug) return;
+    const docId = `books/${slug}.md`;
+    let content = await this.couchSync.readFile(docId);
+    if (!content) {
+      content =
+        `---\ntype: book\ntitle: "${bookTitle.replace(/"/g, "'")}"\n` +
+        `author: ${author ? `"${author.replace(/"/g, "'")}"` : ''}\ntags: [book]\n---\n\n` +
+        `# ${bookTitle}\n\n## Quotes\n\n`;
+      await this.couchSync.writeFile(docId, content);
+      this.logger.log(`Created book note: ${docId}`);
+    }
+    if (!content.includes(wikilink)) {
+      const base = content.endsWith('\n') ? content : content + '\n';
+      await this.couchSync.writeFile(docId, base + `- ${wikilink}\n`);
+    }
+  }
+
+  async removeFromBookNote(bookTitle: string, wikilink: string): Promise<void> {
+    const slug = generateFileName(bookTitle);
+    if (!slug) return;
+    const docId = `books/${slug}.md`;
+    const content = await this.couchSync.readFile(docId);
+    if (content) {
+      const updated = content.replace(`- ${wikilink}\n`, '');
+      if (updated !== content) {
+        await this.couchSync.writeFile(docId, updated);
+        this.logger.log(`Removed from book "${bookTitle}": ${wikilink}`);
       }
     }
   }

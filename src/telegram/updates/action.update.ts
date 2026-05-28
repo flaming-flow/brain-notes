@@ -215,17 +215,22 @@ export class ActionUpdate {
         pending.selectedTags,
       );
 
+      const isNote = pending.classification.entityType === 'note';
+      const source = pending.classification.source || 'own';
+      const book = pending.classification.quoteData?.bookTitle;
       this.processor.storeLastSave(
         ctx, filePath, folder, fileName, pending.classification.lifeArea,
+        isNote ? source : undefined,
+        isNote ? book : undefined,
       );
       ctx.session.pendingNote = undefined;
 
-      const undoKeyboard = Markup.inlineKeyboard([
-        [Markup.button.callback('Undo (60s)', 'undo_save')],
-      ]);
+      const keyboard = isNote
+        ? this.processor.buildPostSaveKeyboard(source)
+        : Markup.inlineKeyboard([[Markup.button.callback('Undo (60s)', 'undo_save')]]);
 
       await ctx.answerCbQuery('Saved!');
-      await ctx.editMessageText(confirmText, undoKeyboard);
+      await ctx.editMessageText(confirmText, keyboard);
 
       // Check for mentioned people → suggest creating contacts
       const people = pending.classification.mentionedPeople;
@@ -853,6 +858,9 @@ export class ActionUpdate {
       if (lastSave.lifeArea) {
         await this.writer.removeFromMoc(lastSave.lifeArea, `[[${lastSave.fileName}]]`);
       }
+      if (lastSave.book) {
+        await this.writer.removeFromBookNote(lastSave.book, `[[${lastSave.fileName}]]`);
+      }
 
       ctx.session.lastSave = undefined;
       await ctx.answerCbQuery('Undone!');
@@ -860,6 +868,43 @@ export class ActionUpdate {
     } catch (error) {
       this.logger.error(`Undo failed: ${error}`);
       await ctx.answerCbQuery('Undo failed');
+    }
+  }
+
+  @Action('toggle_source')
+  async onToggleSource(@Ctx() ctx: BotContext): Promise<void> {
+    const lastSave = ctx.session?.lastSave;
+    if (!lastSave) {
+      await ctx.answerCbQuery('Nothing to change');
+      return;
+    }
+
+    const content = await this.couchSync.readFile(lastSave.filePath);
+    if (!content) {
+      await ctx.answerCbQuery('Note not found');
+      return;
+    }
+
+    const current = /^source:\s*(\w+)/m.exec(content)?.[1] === 'quote' ? 'quote' : 'own';
+    const next: 'own' | 'quote' = current === 'quote' ? 'own' : 'quote';
+
+    const updated = /^source:\s*.*$/m.test(content)
+      ? content.replace(/^source:\s*.*$/m, `source: ${next}`)
+      : content.replace(/^---\n/, `---\nsource: ${next}\n`);
+    await this.couchSync.writeFile(lastSave.filePath, updated);
+
+    if (next === 'own' && lastSave.book) {
+      await this.writer.removeFromBookNote(lastSave.book, `[[${lastSave.fileName}]]`);
+    }
+    lastSave.source = next;
+
+    await ctx.answerCbQuery(next === 'quote' ? 'Помечено как цитата' : 'Помечено как моё');
+    try {
+      await ctx.editMessageReplyMarkup(
+        this.processor.buildPostSaveKeyboard(next).reply_markup,
+      );
+    } catch (err) {
+      if (!String(err).includes('message is not modified')) throw err;
     }
   }
 }

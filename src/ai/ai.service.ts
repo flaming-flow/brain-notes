@@ -68,6 +68,11 @@ export class AiService {
         suggestedTags: Array.isArray(raw.suggestedTags) ? raw.suggestedTags : [],
         lifeArea: String(raw.lifeArea || ''),
         confidence: Number(raw.confidence) || 0,
+        source: raw.source === 'quote' ? 'quote' : 'own',
+        quoteData: raw.quoteData && typeof raw.quoteData === 'object' ? {
+          author: raw.quoteData.author ? String(raw.quoteData.author) : undefined,
+          bookTitle: raw.quoteData.bookTitle ? String(raw.quoteData.bookTitle) : undefined,
+        } : undefined,
         dueDate: raw.dueDate || undefined,
         priority: ['high', 'medium', 'low'].includes(raw.priority) ? raw.priority : undefined,
         recurrence: raw.recurrence || undefined,
