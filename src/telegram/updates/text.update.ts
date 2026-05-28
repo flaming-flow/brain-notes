@@ -5,9 +5,11 @@ import { AuthGuard } from '../guards/auth.guard.js';
 import { MessageProcessorService } from '../services/message-processor.service.js';
 import { VaultService } from '../../vault/vault.service.js';
 import { VaultWriterService } from '../../vault/vault-writer.service.js';
+import { VaultReaderService } from '../../vault/vault-reader.service.js';
 import { CommandUpdate } from './command.update.js';
 import { ContentAgentService } from '../../content/content-agent.service.js';
 import { CouchDBSyncService } from '../../couchdb/couchdb-sync.service.js';
+import { findSimilarTags } from '../utils/tag-similarity.util.js';
 import type { BotContext } from '../../shared/interfaces/session.interface.js';
 import type { ForwardMetadata } from '../../shared/interfaces/forward-metadata.interface.js';
 
@@ -20,6 +22,7 @@ export class TextUpdate {
     private readonly processor: MessageProcessorService,
     private readonly vault: VaultService,
     private readonly writer: VaultWriterService,
+    private readonly reader: VaultReaderService,
     private readonly commandUpdate: CommandUpdate,
     private readonly contentAgent: ContentAgentService,
     private readonly couchSync: CouchDBSyncService,
@@ -187,13 +190,32 @@ export class TextUpdate {
     const newTag = text.toLowerCase().trim().replace(/\s+/g, '-');
     pending.waitingForCustomTag = false;
 
-    if (!pending.selectedTags.includes(newTag)) {
-      pending.selectedTags.push(newTag);
-    }
-    if (!pending.classification.suggestedTags.includes(newTag)) {
-      pending.classification.suggestedTags.push(newTag);
+    if (!newTag || pending.selectedTags.includes(newTag)) {
+      await this.processor.showTagKeyboard(ctx);
+      return;
     }
 
+    // Warn if the typed tag looks like an existing one (avoid duplicates)
+    const vocab = await this.reader.getTagVocabulary();
+    const similar = findSimilarTags(
+      newTag,
+      vocab.map((v) => v.tag),
+      pending.selectedTags,
+    ).filter((t) => Buffer.byteLength(`usetag:${t}`) <= 64).slice(0, 3);
+
+    if (similar.length > 0) {
+      pending.pendingNewTag = newTag;
+      const rows = similar.map((t) => [Markup.button.callback(`Use #${t}`, `usetag:${t}`)]);
+      rows.push([Markup.button.callback(`Keep «${newTag}»`, 'keep_new_tag')]);
+      await ctx.reply(
+        `«${newTag}» looks similar to tags you already use. Reuse one to keep links clean?`,
+        Markup.inlineKeyboard(rows),
+      );
+      return;
+    }
+
+    pending.selectedTags.push(newTag);
+    pending.classification.suggestedTags.push(newTag);
     await this.processor.showTagKeyboard(ctx);
   }
 

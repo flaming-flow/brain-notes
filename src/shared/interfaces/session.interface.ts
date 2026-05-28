@@ -9,6 +9,7 @@ export interface PendingNote {
   selectedTags: string[];
   selectedAreas: string[];
   waitingForCustomTag?: boolean;
+  pendingNewTag?: string;
   sourceType?: 'text' | 'voice' | 'forward' | 'photo' | 'audio';
   forwardMeta?: ForwardMetadata;
   imageFileName?: string;

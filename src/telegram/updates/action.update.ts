@@ -77,10 +77,94 @@ export class ActionUpdate {
 
   @Action('add_tag')
   async onAddTag(@Ctx() ctx: BotContext): Promise<void> {
+    const pending = ctx.session?.pendingNote;
+    if (!pending) return;
+    await ctx.answerCbQuery();
+
+    const vocab = await this.reader.getTagVocabulary();
+    const selected = new Set(pending.selectedTags);
+    const available = vocab
+      .filter(
+        (v) =>
+          !selected.has(v.tag) &&
+          !pending.classification.suggestedTags.includes(v.tag) &&
+          Buffer.byteLength(`pick_tag:${v.tag}`) <= 64,
+      )
+      .slice(0, 12);
+
+    const rows: ReturnType<typeof Markup.button.callback>[][] = [];
+    for (let i = 0; i < available.length; i += 2) {
+      rows.push(
+        available.slice(i, i + 2).map((v) =>
+          Markup.button.callback(`#${v.tag}`, `pick_tag:${v.tag}`),
+        ),
+      );
+    }
+    rows.push([
+      Markup.button.callback('Type new', 'type_tag'),
+      Markup.button.callback('« Back', 'tag_back'),
+    ]);
+
+    const text =
+      available.length > 0
+        ? 'Reuse an existing tag (keeps your links clean), or type a new one:'
+        : 'No existing tags yet — type a new one:';
+    await ctx.editMessageText(text, Markup.inlineKeyboard(rows));
+  }
+
+  @Action(/^pick_tag:(.+)$/)
+  async onPickTag(@Ctx() ctx: BotContext): Promise<void> {
+    const pending = ctx.session?.pendingNote;
+    if (!pending) return;
+    const tag = (ctx.callbackQuery as { data?: string })?.data?.replace('pick_tag:', '');
+    if (!tag) return;
+    this.addTag(pending, tag);
+    await ctx.answerCbQuery(`+${tag}`);
+    await this.processor.showTagKeyboard(ctx, true);
+  }
+
+  @Action('type_tag')
+  async onTypeTag(@Ctx() ctx: BotContext): Promise<void> {
     if (!ctx.session?.pendingNote) return;
     ctx.session.pendingNote.waitingForCustomTag = true;
     await ctx.answerCbQuery();
-    await ctx.reply('Type your custom tag:');
+    await ctx.editMessageText('Type your custom tag:');
+  }
+
+  @Action('tag_back')
+  async onTagBack(@Ctx() ctx: BotContext): Promise<void> {
+    if (!ctx.session?.pendingNote) return;
+    await ctx.answerCbQuery();
+    await this.processor.showTagKeyboard(ctx, true);
+  }
+
+  @Action(/^usetag:(.+)$/)
+  async onUseExistingTag(@Ctx() ctx: BotContext): Promise<void> {
+    const pending = ctx.session?.pendingNote;
+    if (!pending) return;
+    const tag = (ctx.callbackQuery as { data?: string })?.data?.replace('usetag:', '');
+    pending.pendingNewTag = undefined;
+    if (tag) this.addTag(pending, tag);
+    await ctx.answerCbQuery(tag ? `+${tag}` : undefined);
+    await this.processor.showTagKeyboard(ctx, true);
+  }
+
+  @Action('keep_new_tag')
+  async onKeepNewTag(@Ctx() ctx: BotContext): Promise<void> {
+    const pending = ctx.session?.pendingNote;
+    if (!pending) return;
+    const tag = pending.pendingNewTag;
+    pending.pendingNewTag = undefined;
+    if (tag) this.addTag(pending, tag);
+    await ctx.answerCbQuery();
+    await this.processor.showTagKeyboard(ctx, true);
+  }
+
+  private addTag(pending: NonNullable<BotContext['session']['pendingNote']>, tag: string): void {
+    if (!pending.selectedTags.includes(tag)) pending.selectedTags.push(tag);
+    if (!pending.classification.suggestedTags.includes(tag)) {
+      pending.classification.suggestedTags.push(tag);
+    }
   }
 
   @Action('quick_save')
@@ -566,21 +650,29 @@ export class ActionUpdate {
       return;
     }
 
-    const display = this.formatContactDisplay(content, fileName);
+    const { text, links } = this.parseContactDisplay(content, fileName);
 
-    const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback('« Back to contacts', 'contacts_page:0')],
-    ]);
+    type Btn = ReturnType<typeof Markup.button.callback> | ReturnType<typeof Markup.button.url>;
+    const rows: Btn[][] = [];
+    for (let i = 0; i < links.length; i += 2) {
+      rows.push(links.slice(i, i + 2).map((l) => Markup.button.url(l.label, l.url)));
+    }
+    rows.push([Markup.button.callback('« Back to contacts', 'contacts_page:0')]);
+    const keyboard = Markup.inlineKeyboard(rows);
 
-    const truncated = display.length > 3500
-      ? display.slice(0, 3500) + '\n\n... (truncated)'
-      : display;
+    const truncated = text.length > 3500
+      ? text.slice(0, 3500) + '\n\n... (truncated)'
+      : text;
 
     await ctx.editMessageText(truncated, keyboard);
   }
 
-  private formatContactDisplay(content: string, fileName: string): string {
+  private parseContactDisplay(
+    content: string,
+    fileName: string,
+  ): { text: string; links: { label: string; url: string }[] } {
     const lines: string[] = [];
+    const links: { label: string; url: string }[] = [];
 
     // Extract frontmatter fields
     const name = content.match(/^name:\s*"?(.+?)"?\s*$/m)?.[1] || fileName;
@@ -597,17 +689,40 @@ export class ActionUpdate {
     if (context) lines.push(`Context: ${context}`);
     if (tags) lines.push(`Tags: ${tags}`);
 
-    // Extract body (after second ---)
+    // Body after frontmatter
     const secondDash = content.indexOf('---', 4);
-    if (secondDash > 0) {
-      const body = content.slice(secondDash + 3).trim();
-      if (body) {
-        lines.push('');
-        lines.push(body);
+    const body = secondDash > 0 ? content.slice(secondDash + 3) : '';
+
+    // Parse platform entries from the "## Contacts" section into tappable buttons
+    const contactsSection =
+      body.match(/##\s*Contacts\s*\n([\s\S]*?)(?=\n##\s|$)/)?.[1] || '';
+    for (const rawLine of contactsSection.split('\n')) {
+      const entry = rawLine.trim().replace(/^[-*]\s*/, '');
+      const kv = entry.match(/^([A-Za-z][\w]*)\s*:\s*(.+)$/);
+      if (!kv) continue;
+      const key = kv[1];
+      const value = kv[2].trim();
+      if (/^phone$/i.test(key)) continue; // already shown from frontmatter
+      const label = key.charAt(0).toUpperCase() + key.slice(1);
+      const md = value.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+      if (md) {
+        const handle = md[1];
+        const url = md[2].trim();
+        lines.push(`${label}: ${handle}`);
+        if (/^(https?:|tg:)/i.test(url)) links.push({ label, url });
+      } else {
+        lines.push(`${label}: ${value}`);
       }
     }
 
-    return lines.join('\n');
+    // Notes body (after "## Notes")
+    const notes = body.match(/##\s*Notes\s*\n([\s\S]*)$/)?.[1]?.trim();
+    if (notes) {
+      lines.push('');
+      lines.push(notes);
+    }
+
+    return { text: lines.join('\n'), links };
   }
 
   @Action('noop')

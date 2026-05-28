@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import * as yaml from 'js-yaml';
 import { CouchDBSyncService } from '../couchdb/couchdb-sync.service.js';
 
 export interface ContactSummary {
@@ -9,16 +10,79 @@ export interface ContactSummary {
   name: string;
 }
 
+export interface TagFrequency {
+  tag: string;
+  count: number;
+}
+
 @Injectable()
 export class VaultReaderService {
   private readonly logger = new Logger(VaultReaderService.name);
   private readonly basePath: string;
+  private tagCache?: { tags: TagFrequency[]; at: number };
+  private readonly TAG_CACHE_TTL = 5 * 60_000;
 
   constructor(
     private readonly couchSync: CouchDBSyncService,
     config: ConfigService,
   ) {
     this.basePath = config.getOrThrow<string>('vault.basePath');
+  }
+
+  /**
+   * All tags used across the vault, ranked by frequency (most used first).
+   * Cached for 5 min so the picker / dedup checks stay snappy.
+   */
+  async getTagVocabulary(): Promise<TagFrequency[]> {
+    if (this.tagCache && Date.now() - this.tagCache.at < this.TAG_CACHE_TTL) {
+      return this.tagCache.tags;
+    }
+
+    const counts = new Map<string, number>();
+    const collect = (content: string | null): void => {
+      if (!content) return;
+      const match = content.match(/^---\n([\s\S]*?)\n---/);
+      if (!match?.[1]) return;
+      try {
+        const fm = yaml.load(match[1]) as Record<string, unknown>;
+        if (Array.isArray(fm?.tags)) {
+          for (const tag of fm.tags) {
+            if (typeof tag === 'string' && tag.trim()) {
+              const t = tag.trim();
+              counts.set(t, (counts.get(t) || 0) + 1);
+            }
+          }
+        }
+      } catch { /* skip malformed frontmatter */ }
+    };
+
+    try {
+      const ids: string[] = [];
+      for (const prefix of ['inbox/', 'projects/', 'contacts/']) {
+        ids.push(...(await this.couchSync.listByPrefix(prefix)));
+      }
+      for (const id of ids) {
+        if (!id.endsWith('.md')) continue;
+        collect(await this.couchSync.readFile(id));
+      }
+    } catch (err) {
+      this.logger.warn(`Tag vocabulary CouchDB read failed: ${(err as Error).message}`);
+      for (const dir of ['inbox', 'projects', 'contacts']) {
+        try {
+          const files = await fs.readdir(path.join(this.basePath, dir));
+          for (const file of files) {
+            if (!file.endsWith('.md')) continue;
+            collect(await fs.readFile(path.join(this.basePath, dir, file), 'utf-8'));
+          }
+        } catch { /* skip missing dir */ }
+      }
+    }
+
+    const tags = [...counts.entries()]
+      .map(([tag, count]) => ({ tag, count }))
+      .sort((a, b) => b.count - a.count);
+    this.tagCache = { tags, at: Date.now() };
+    return tags;
   }
 
   async listContacts(): Promise<ContactSummary[]> {

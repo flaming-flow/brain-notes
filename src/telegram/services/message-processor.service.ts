@@ -167,11 +167,13 @@ export class MessageProcessorService {
     }
 
     const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('⚡ Quick Save', 'quick_save')],
+      [Markup.button.callback('— Areas (categories) —', 'noop')],
       ...areaRows,
+      [Markup.button.callback('— Tags —', 'noop')],
       ...tagRows,
+      [Markup.button.callback('+ Add tag', 'add_tag')],
       [
-        Markup.button.callback('+ Add tag', 'add_tag'),
-        Markup.button.callback('Quick Save', 'quick_save'),
         Markup.button.callback('Save', 'save_note'),
         Markup.button.callback('Cancel', 'cancel'),
       ],
@@ -179,9 +181,9 @@ export class MessageProcessorService {
 
     const areasDisplay = selectedAreas.length > 0 ? selectedAreas.join(', ') : '?';
     const text =
-      `${classification.entityType} | ${areasDisplay}\n` +
-      `Title: ${classification.title}\n\n` +
-      `Select areas & tags:`;
+      `${classification.entityType} · ${areasDisplay}\n` +
+      `"${classification.title}"\n\n` +
+      `Tap ⚡ Quick Save, or fine-tune areas & tags below.`;
 
     if (edit) {
       await ctx.editMessageText(text, keyboard);

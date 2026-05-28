@@ -14,6 +14,8 @@ export class AiService {
   private readonly openai: OpenAI;
   private readonly model: string;
   private readonly vaultPath: string;
+  private tagCache?: { tags: string[]; at: number };
+  private readonly TAG_CACHE_TTL = 5 * 60_000;
 
   constructor(
     private readonly config: ConfigService,
@@ -173,43 +175,55 @@ export class AiService {
   }
 
   private async getUsedTags(): Promise<string[]> {
-    const tagSet = new Set<string>();
-    try {
-      const ids = await this.couchSync.listByPrefix('inbox/');
-      const recentIds = ids.slice(-30);
-      for (const id of recentIds) {
-        const content = await this.couchSync.readFile(id);
-        if (!content) continue;
-        const match = content.match(/^---\n([\s\S]*?)\n---/);
-        if (match?.[1]) {
-          const frontmatter = yaml.load(match[1]) as Record<string, unknown>;
-          if (Array.isArray(frontmatter?.tags)) {
-            for (const tag of frontmatter.tags) {
-              if (typeof tag === 'string') tagSet.add(tag);
+    if (this.tagCache && Date.now() - this.tagCache.at < this.TAG_CACHE_TTL) {
+      return this.tagCache.tags;
+    }
+
+    const counts = new Map<string, number>();
+    const collect = (content: string | null): void => {
+      if (!content) return;
+      const match = content.match(/^---\n([\s\S]*?)\n---/);
+      if (!match?.[1]) return;
+      try {
+        const frontmatter = yaml.load(match[1]) as Record<string, unknown>;
+        if (Array.isArray(frontmatter?.tags)) {
+          for (const tag of frontmatter.tags) {
+            if (typeof tag === 'string' && tag.trim()) {
+              const t = tag.trim();
+              counts.set(t, (counts.get(t) || 0) + 1);
             }
           }
         }
+      } catch { /* skip malformed frontmatter */ }
+    };
+
+    try {
+      const ids: string[] = [];
+      for (const prefix of ['inbox/', 'projects/', 'contacts/']) {
+        ids.push(...(await this.couchSync.listByPrefix(prefix)));
+      }
+      for (const id of ids) {
+        if (!id.endsWith('.md')) continue;
+        collect(await this.couchSync.readFile(id));
       }
     } catch {
       // Fallback to filesystem
-      const dirPath = path.join(this.vaultPath, 'inbox');
-      try {
-        const files = await fs.readdir(dirPath);
-        for (const file of files.slice(-30)) {
-          if (!file.endsWith('.md')) continue;
-          const content = await fs.readFile(path.join(dirPath, file), 'utf-8');
-          const match = content.match(/^---\n([\s\S]*?)\n---/);
-          if (match?.[1]) {
-            const frontmatter = yaml.load(match[1]) as Record<string, unknown>;
-            if (Array.isArray(frontmatter?.tags)) {
-              for (const tag of frontmatter.tags) {
-                if (typeof tag === 'string') tagSet.add(tag);
-              }
-            }
+      for (const dir of ['inbox', 'projects', 'contacts']) {
+        try {
+          const files = await fs.readdir(path.join(this.vaultPath, dir));
+          for (const file of files) {
+            if (!file.endsWith('.md')) continue;
+            collect(await fs.readFile(path.join(this.vaultPath, dir, file), 'utf-8'));
           }
-        }
-      } catch { /* skip */ }
+        } catch { /* skip missing dir */ }
+      }
     }
-    return [...tagSet];
+
+    const tags = [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 80)
+      .map(([tag]) => tag);
+    this.tagCache = { tags, at: Date.now() };
+    return tags;
   }
 }
