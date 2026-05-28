@@ -1,7 +1,8 @@
 node_modules/
 dist/
 .env
-/vault/
+/vault/*
+!/vault/templates/
 *.js.map
 coverage/
 .DS_Store
