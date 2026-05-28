@@ -4,11 +4,21 @@ import OpenAI from 'openai';
 import { QdrantService } from './qdrant.service.js';
 import { CouchDBSyncService } from '../couchdb/couchdb-sync.service.js';
 
+// Cosine similarity above which an existing tag is auto-selected for a note.
+// text-embedding-3-small produces compressed scores for short tag strings —
+// tune against the real vault if pre-selection feels too eager or too sparse.
+const TAG_SIM_THRESHOLD = 0.3;
+const MAX_AUTO_TAGS = 3;
+
 @Injectable()
 export class EmbeddingService {
   private readonly logger = new Logger(EmbeddingService.name);
   private readonly openai: OpenAI;
   private readonly model = 'text-embedding-3-small';
+  private readonly tagVectorCache = new Map<string, number[]>();
+
+  static readonly TAG_SIM_THRESHOLD = TAG_SIM_THRESHOLD;
+  static readonly MAX_AUTO_TAGS = MAX_AUTO_TAGS;
 
   constructor(
     private readonly config: ConfigService,
@@ -100,11 +110,70 @@ export class EmbeddingService {
     return count;
   }
 
+  /**
+   * Rank tags by semantic relevance to the note text (cosine similarity).
+   * Tag vectors are cached in-memory; only previously unseen tags are embedded.
+   * Returns [] on any failure so callers can fall back to plain ordering.
+   */
+  async rankTags(
+    noteText: string,
+    tags: string[],
+  ): Promise<{ tag: string; score: number }[]> {
+    const unique = [...new Set(tags.filter((t) => t && t.trim()))];
+    if (unique.length === 0 || noteText.trim().length === 0) return [];
+
+    try {
+      const uncached = unique.filter((t) => !this.tagVectorCache.has(t));
+      if (uncached.length > 0) {
+        const vectors = await this.embedBatch(uncached.map((t) => t.replace(/-/g, ' ')));
+        uncached.forEach((tag, i) => {
+          if (vectors[i]) this.tagVectorCache.set(tag, vectors[i]);
+        });
+      }
+
+      const noteVec = await this.embed(noteText);
+
+      return unique
+        .map((tag) => {
+          const vec = this.tagVectorCache.get(tag);
+          return { tag, score: vec ? this.cosine(noteVec, vec) : -1 };
+        })
+        .sort((a, b) => b.score - a.score);
+    } catch (err) {
+      this.logger.warn(`rankTags failed: ${(err as Error).message}`);
+      return [];
+    }
+  }
+
   private async embed(text: string): Promise<number[]> {
     const response = await this.openai.embeddings.create({
       model: this.model,
       input: text.slice(0, 8000), // Max token limit safety
     });
     return response.data[0].embedding;
+  }
+
+  private async embedBatch(inputs: string[]): Promise<number[][]> {
+    const response = await this.openai.embeddings.create({
+      model: this.model,
+      input: inputs.map((i) => i.slice(0, 8000)),
+    });
+    // OpenAI returns data in input order, but sort by index to be safe.
+    return [...response.data]
+      .sort((a, b) => a.index - b.index)
+      .map((d) => d.embedding);
+  }
+
+  private cosine(a: number[], b: number[]): number {
+    let dot = 0;
+    let normA = 0;
+    let normB = 0;
+    for (let i = 0; i < a.length; i++) {
+      dot += a[i] * b[i];
+      normA += a[i] * a[i];
+      normB += b[i] * b[i];
+    }
+    const denom = Math.sqrt(normA) * Math.sqrt(normB);
+    return denom === 0 ? 0 : dot / denom;
   }
 }

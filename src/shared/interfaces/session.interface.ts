@@ -10,6 +10,10 @@ export interface PendingNote {
   selectedAreas: string[];
   waitingForCustomTag?: boolean;
   pendingNewTag?: string;
+  rankedTags?: string[];
+  tagPickerPage?: number;
+  tagSearchQuery?: string;
+  waitingForTagSearch?: boolean;
   sourceType?: 'text' | 'voice' | 'forward' | 'photo' | 'audio';
   forwardMeta?: ForwardMetadata;
   imageFileName?: string;

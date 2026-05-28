@@ -114,6 +114,16 @@ export class TextUpdate {
         return;
       }
 
+      // 3b. Waiting for tag-picker search filter
+      if (ctx.session?.pendingNote?.waitingForTagSearch) {
+        const pending = ctx.session.pendingNote;
+        pending.waitingForTagSearch = false;
+        pending.tagSearchQuery = text.trim();
+        pending.tagPickerPage = 0;
+        await this.processor.renderTagPicker(ctx, false);
+        return;
+      }
+
       // 4. Waiting for custom tag input
       if (ctx.session?.pendingNote?.waitingForCustomTag) {
         await this.handleCustomTag(ctx, text);

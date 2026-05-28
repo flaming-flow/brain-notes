@@ -79,48 +79,43 @@ export class ActionUpdate {
   async onAddTag(@Ctx() ctx: BotContext): Promise<void> {
     const pending = ctx.session?.pendingNote;
     if (!pending) return;
+    pending.tagPickerPage = 0;
+    pending.tagSearchQuery = undefined;
     await ctx.answerCbQuery();
-
-    const vocab = await this.reader.getTagVocabulary();
-    const selected = new Set(pending.selectedTags);
-    const available = vocab
-      .filter(
-        (v) =>
-          !selected.has(v.tag) &&
-          !pending.classification.suggestedTags.includes(v.tag) &&
-          Buffer.byteLength(`pick_tag:${v.tag}`) <= 64,
-      )
-      .slice(0, 12);
-
-    const rows: ReturnType<typeof Markup.button.callback>[][] = [];
-    for (let i = 0; i < available.length; i += 2) {
-      rows.push(
-        available.slice(i, i + 2).map((v) =>
-          Markup.button.callback(`#${v.tag}`, `pick_tag:${v.tag}`),
-        ),
-      );
-    }
-    rows.push([
-      Markup.button.callback('Type new', 'type_tag'),
-      Markup.button.callback('« Back', 'tag_back'),
-    ]);
-
-    const text =
-      available.length > 0
-        ? 'Reuse an existing tag (keeps your links clean), or type a new one:'
-        : 'No existing tags yet — type a new one:';
-    await ctx.editMessageText(text, Markup.inlineKeyboard(rows));
+    await this.processor.renderTagPicker(ctx, true);
   }
 
-  @Action(/^pick_tag:(.+)$/)
-  async onPickTag(@Ctx() ctx: BotContext): Promise<void> {
+  @Action(/^tpick:(.+)$/)
+  async onTagPick(@Ctx() ctx: BotContext): Promise<void> {
     const pending = ctx.session?.pendingNote;
     if (!pending) return;
-    const tag = (ctx.callbackQuery as { data?: string })?.data?.replace('pick_tag:', '');
+    const tag = (ctx.callbackQuery as { data?: string })?.data?.replace('tpick:', '');
     if (!tag) return;
-    this.addTag(pending, tag);
-    await ctx.answerCbQuery(`+${tag}`);
-    await this.processor.showTagKeyboard(ctx, true);
+    this.toggleTag(pending, tag);
+    await ctx.answerCbQuery();
+    await this.processor.renderTagPicker(ctx, true);
+  }
+
+  @Action(/^tpage:(\d+)$/)
+  async onTagPage(@Ctx() ctx: BotContext): Promise<void> {
+    const pending = ctx.session?.pendingNote;
+    if (!pending) return;
+    const page = parseInt(
+      (ctx.callbackQuery as { data?: string })?.data?.replace('tpage:', '') || '0',
+      10,
+    );
+    pending.tagPickerPage = page;
+    await ctx.answerCbQuery();
+    await this.processor.renderTagPicker(ctx, true);
+  }
+
+  @Action('tag_search')
+  async onTagSearch(@Ctx() ctx: BotContext): Promise<void> {
+    const pending = ctx.session?.pendingNote;
+    if (!pending) return;
+    pending.waitingForTagSearch = true;
+    await ctx.answerCbQuery();
+    await ctx.editMessageText('Type to filter tags:');
   }
 
   @Action('type_tag')
@@ -133,7 +128,11 @@ export class ActionUpdate {
 
   @Action('tag_back')
   async onTagBack(@Ctx() ctx: BotContext): Promise<void> {
-    if (!ctx.session?.pendingNote) return;
+    const pending = ctx.session?.pendingNote;
+    if (!pending) return;
+    pending.tagSearchQuery = undefined;
+    pending.tagPickerPage = undefined;
+    pending.waitingForTagSearch = false;
     await ctx.answerCbQuery();
     await this.processor.showTagKeyboard(ctx, true);
   }
@@ -164,6 +163,15 @@ export class ActionUpdate {
     if (!pending.selectedTags.includes(tag)) pending.selectedTags.push(tag);
     if (!pending.classification.suggestedTags.includes(tag)) {
       pending.classification.suggestedTags.push(tag);
+    }
+  }
+
+  private toggleTag(pending: NonNullable<BotContext['session']['pendingNote']>, tag: string): void {
+    const idx = pending.selectedTags.indexOf(tag);
+    if (idx >= 0) {
+      pending.selectedTags.splice(idx, 1);
+    } else {
+      this.addTag(pending, tag);
     }
   }
 
