@@ -66,13 +66,13 @@ export class VaultWriterService {
     return docId;
   }
 
-  async appendToFile(filePath: string, content: string): Promise<void> {
+  async appendToFile(filePath: string, content: string): Promise<boolean> {
     const existing = await this.couchSync.readFile(filePath);
-    if (existing) {
-      const updated = existing + `\n${content}\n`;
-      await this.couchSync.writeFile(filePath, updated);
-      this.logger.log(`Appended to: ${filePath}`);
-    }
+    if (!existing) return false;
+    const updated = existing + `\n${content}\n`;
+    await this.couchSync.writeFile(filePath, updated);
+    this.logger.log(`Appended to: ${filePath}`);
+    return true;
   }
 
   async deleteFile(filePath: string): Promise<void> {

@@ -15,6 +15,7 @@ export class AiService {
   private readonly model: string;
   private readonly vaultPath: string;
   private tagCache?: { tags: string[]; at: number };
+  private titleCache?: { titles: string[]; at: number };
   private readonly TAG_CACHE_TTL = 5 * 60_000;
 
   constructor(
@@ -156,13 +157,18 @@ export class AiService {
   }
 
   private async getExistingNoteTitles(): Promise<string[]> {
+    if (this.titleCache && Date.now() - this.titleCache.at < this.TAG_CACHE_TTL) {
+      return this.titleCache.titles;
+    }
     try {
       const ids: string[] = [];
       for (const prefix of ['inbox/', 'contacts/', 'projects/']) {
         const found = await this.couchSync.listByPrefix(prefix);
         ids.push(...found);
       }
-      return ids.map(id => id.replace(/^[^/]+\//, '').replace('.md', ''));
+      const titles = ids.map(id => id.replace(/^[^/]+\//, '').replace('.md', ''));
+      this.titleCache = { titles, at: Date.now() };
+      return titles;
     } catch {
       // Fallback to filesystem
       const titles: string[] = [];

@@ -232,10 +232,16 @@ export class ActionUpdate {
       await ctx.answerCbQuery('Saved!');
       await ctx.editMessageText(confirmText, keyboard);
 
-      // Check for mentioned people → suggest creating contacts
+      // Check for mentioned people → suggest creating contacts.
+      // Kept outside the save try/catch so a suggestion failure never looks
+      // like a failed save (the note is already persisted at this point).
       const people = pending.classification.mentionedPeople;
       if (people?.length && pending.classification.entityType !== 'contact') {
-        await this.suggestPeopleContacts(ctx, people, filePath);
+        try {
+          await this.suggestPeopleContacts(ctx, people, filePath);
+        } catch (err) {
+          this.logger.warn(`Contact suggestion failed: ${err}`);
+        }
       }
     } catch (error) {
       this.logger.error(`Error saving: ${error}`);
@@ -243,49 +249,81 @@ export class ActionUpdate {
     }
   }
 
+  // Normalize a name to a set of comparable word tokens (lowercase, no
+  // punctuation). Used to match a mentioned name against contact file names
+  // without naive substring collisions ("Аня" must not match "Марианна").
+  private nameTokens(value: string): string[] {
+    return value
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
+      .split(/[\s-]+/)
+      .filter(Boolean);
+  }
+
+  private namesMatch(a: string, b: string): boolean {
+    const ta = new Set(this.nameTokens(a));
+    const tb = this.nameTokens(b);
+    // Match when every token of the shorter name appears in the other.
+    const [short, long] = ta.size <= tb.length ? [[...ta], new Set(tb)] : [tb, ta];
+    return short.length > 0 && short.every((t) => long.has(t));
+  }
+
   private async suggestPeopleContacts(
     ctx: BotContext,
     people: string[],
     noteDocId: string,
   ): Promise<void> {
-    for (const name of people) {
-      // Check if contact already exists
-      const contacts = await this.couchSync.listByPrefix('contacts/');
-      const nameLower = name.toLowerCase();
-      const existing = contacts.filter((c) => {
-        const contactName = c.replace('contacts/', '').replace('.md', '').toLowerCase();
-        return contactName.includes(nameLower) || nameLower.includes(contactName);
-      });
+    // Fetch contacts once, not per person.
+    const contacts = await this.couchSync.listByPrefix('contacts/');
+    const contactNames = contacts.map((c) =>
+      c.replace('contacts/', '').replace('.md', ''),
+    );
 
-      if (existing.length > 0) {
+    // Store the path + matches in session so callbacks carry only indices,
+    // keeping callback_data well under Telegram's 64-byte limit.
+    ctx.session ??= {} as BotContext['session'];
+    const matches = people.map((name) => ({
+      name,
+      existing: contactNames.filter((cn) => this.namesMatch(name, cn)),
+    }));
+    ctx.session.pendingPeople = { noteDocId, matches };
+
+    for (let personIdx = 0; personIdx < matches.length; personIdx++) {
+      const match = matches[personIdx];
+      if (match.existing.length > 0) {
         // Contact exists — offer to link
-        const buttons = existing.map((c) => {
-          const cName = c.replace('contacts/', '').replace('.md', '');
-          return [Markup.button.callback(`Link ${cName}`, `link_contact:${cName}:${noteDocId}`)];
-        });
-        buttons.push([Markup.button.callback(`New "${name}"`, `new_contact:${name}`)]);
+        const buttons = match.existing.map((cName, contactIdx) => [
+          Markup.button.callback(`Link ${cName}`, `link_contact:${personIdx}:${contactIdx}`),
+        ]);
+        buttons.push([Markup.button.callback(`New "${match.name}"`, `new_contact:${personIdx}`)]);
         buttons.push([Markup.button.callback('Skip', 'noop')]);
-        const keyboard = Markup.inlineKeyboard(buttons);
-        await ctx.reply(`"${name}" mentioned. Link to existing contact or create new?`, keyboard);
+        await ctx.reply(
+          `"${match.name}" mentioned. Link to existing contact or create new?`,
+          Markup.inlineKeyboard(buttons),
+        );
       } else {
         // No contact — offer to create
-        const keyboard = Markup.inlineKeyboard([
+        await ctx.reply(`"${match.name}" mentioned but not in contacts. Add?`, Markup.inlineKeyboard([
           [
-            Markup.button.callback(`Add "${name}" to contacts`, `new_contact:${name}`),
+            Markup.button.callback(`Add "${match.name}" to contacts`, `new_contact:${personIdx}`),
             Markup.button.callback('Skip', 'noop'),
           ],
-        ]);
-        await ctx.reply(`"${name}" mentioned but not in contacts. Add?`, keyboard);
+        ]));
       }
     }
   }
 
   // --- People mention actions ---
 
-  @Action(/^new_contact:(.+)$/)
+  @Action(/^new_contact:(\d+)$/)
   async onNewContact(@Ctx() ctx: BotContext): Promise<void> {
     const callbackData = (ctx.callbackQuery as { data?: string })?.data;
-    const name = callbackData?.replace('new_contact:', '') || '';
+    const personIdx = parseInt(callbackData?.replace('new_contact:', '') || '', 10);
+    const name = ctx.session?.pendingPeople?.matches[personIdx]?.name;
+    if (!name) {
+      await ctx.answerCbQuery('Expired — send the note again');
+      return;
+    }
     await ctx.answerCbQuery();
     await ctx.editMessageText(`Adding ${name} to contacts...`);
 
@@ -305,14 +343,21 @@ export class ActionUpdate {
     await ctx.reply(`Contact: ${name}\n\nPhone number?`, keyboard);
   }
 
-  @Action(/^link_contact:(.+):(.+)$/)
+  @Action(/^link_contact:(\d+):(\d+)$/)
   async onLinkContact(@Ctx() ctx: BotContext): Promise<void> {
     const callbackData = (ctx.callbackQuery as { data?: string })?.data;
-    const match = callbackData?.match(/^link_contact:([^:]+):(.+)$/);
+    const match = callbackData?.match(/^link_contact:(\d+):(\d+)$/);
     if (!match) return;
 
-    const contactName = match[1];
-    const noteDocId = match[2];
+    const personIdx = parseInt(match[1], 10);
+    const contactIdx = parseInt(match[2], 10);
+    const pendingPeople = ctx.session?.pendingPeople;
+    const contactName = pendingPeople?.matches[personIdx]?.existing[contactIdx];
+    const noteDocId = pendingPeople?.noteDocId;
+    if (!contactName || !noteDocId) {
+      await ctx.answerCbQuery('Expired — send the note again');
+      return;
+    }
 
     await ctx.answerCbQuery();
 
@@ -406,9 +451,9 @@ export class ActionUpdate {
 
     await ctx.answerCbQuery();
     try {
-      await this.writer.appendToFile(pending.filePath, pending.text);
+      const ok = await this.writer.appendToFile(pending.filePath, pending.text);
       ctx.session.pendingEdit = undefined;
-      await ctx.editMessageText(`Appended to: ${pending.fileName}`);
+      await ctx.editMessageText(ok ? `Appended to: ${pending.fileName}` : 'Note not found.');
     } catch (err) {
       this.logger.error(`Append failed: ${err}`);
       await ctx.editMessageText('Append failed.');
@@ -580,6 +625,7 @@ export class ActionUpdate {
       ctx.session.pendingVoice = undefined;
       ctx.session.pendingMusic = undefined;
       ctx.session.pendingEdit = undefined;
+      ctx.session.pendingPeople = undefined;
     }
     await ctx.answerCbQuery('Cancelled');
     await ctx.editMessageText('Cancelled.');

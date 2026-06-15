@@ -82,6 +82,11 @@ export interface SavedNoteRef {
   fileName: string;
 }
 
+export interface PendingPeople {
+  noteDocId: string;
+  matches: { name: string; existing: string[] }[];
+}
+
 export interface BotSession {
   pendingNote?: PendingNote;
   pendingContact?: PendingContact;
@@ -93,6 +98,7 @@ export interface BotSession {
   lastLocation?: SavedLocation;
   templateHint?: 'note' | 'event';
   contentGen?: ContentGeneration;
+  pendingPeople?: PendingPeople;
 }
 
 export type BotContext = Context & { session: BotSession };
