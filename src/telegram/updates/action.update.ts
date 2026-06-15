@@ -1,4 +1,4 @@
-import { Logger, UseGuards } from '@nestjs/common';
+import { Logger, UseGuards, Optional, Inject } from '@nestjs/common';
 import { Update, Action, Ctx } from 'nestjs-telegraf';
 import { Markup } from 'telegraf';
 import { AuthGuard } from '../guards/auth.guard.js';
@@ -8,6 +8,7 @@ import { VaultService } from '../../vault/vault.service.js';
 import { VaultWriterService } from '../../vault/vault-writer.service.js';
 import { VaultReaderService } from '../../vault/vault-reader.service.js';
 import { CouchDBSyncService } from '../../couchdb/couchdb-sync.service.js';
+import { EmbeddingService } from '../../vector/embedding.service.js';
 import { ContentAgentService } from '../../content/content-agent.service.js';
 import type { ThreadsFormat } from '../../content/prompts/threads.prompt.js';
 import { TextUpdate } from './text.update.js';
@@ -30,6 +31,7 @@ export class ActionUpdate {
     private readonly contentAgent: ContentAgentService,
     private readonly textUpdate: TextUpdate,
     private readonly commandUpdate: CommandUpdate,
+    @Optional() @Inject(EmbeddingService) private readonly embedding?: EmbeddingService,
   ) {}
 
   @Action(/^tag:(.+)$/)
@@ -236,9 +238,9 @@ export class ActionUpdate {
       // Kept outside the save try/catch so a suggestion failure never looks
       // like a failed save (the note is already persisted at this point).
       const people = pending.classification.mentionedPeople;
-      if (people?.length && pending.classification.entityType !== 'contact') {
+      if (pending.classification.entityType !== 'contact') {
         try {
-          await this.suggestPeopleContacts(ctx, people, filePath);
+          await this.suggestPeopleContacts(ctx, people ?? [], filePath, pending.content);
         } catch (err) {
           this.logger.warn(`Contact suggestion failed: ${err}`);
         }
@@ -268,10 +270,25 @@ export class ActionUpdate {
     return short.length > 0 && short.every((t) => long.has(t));
   }
 
+  // Cosine score above which a context-only (no name mention) contact is
+  // confident enough to surface as a "link?" suggestion. Below this we stay
+  // silent to avoid noise on every note.
+  private static readonly SEMANTIC_CONTACT_THRESHOLD = 0.45;
+
+  // Append a [[Name]] wikilink to a note in CouchDB, deduplicated.
+  private async linkContactToNote(noteDocId: string, contactName: string): Promise<void> {
+    const noteContent = await this.couchSync.readFile(noteDocId);
+    if (noteContent && !noteContent.includes(`[[${contactName}]]`)) {
+      const updated = noteContent.trimEnd() + `\n\n[[${contactName}]]\n`;
+      await this.couchSync.writeFile(noteDocId, updated);
+    }
+  }
+
   private async suggestPeopleContacts(
     ctx: BotContext,
     people: string[],
     noteDocId: string,
+    noteText: string,
   ): Promise<void> {
     // Fetch contacts once, not per person.
     const contacts = await this.couchSync.listByPrefix('contacts/');
@@ -279,13 +296,48 @@ export class ActionUpdate {
       c.replace('contacts/', '').replace('.md', ''),
     );
 
-    // Store the path + matches in session so callbacks carry only indices,
-    // keeping callback_data well under Telegram's 64-byte limit.
     ctx.session ??= {} as BotContext['session'];
-    const matches = people.map((name) => ({
+
+    // 1. Auto-link unambiguous name matches (exactly one contact). The user
+    //    can undo via the Unlink button. Ambiguous (>1) and unknown (0) names
+    //    fall through to the interactive ask flow below.
+    const autoLinked: string[] = [];
+    const toAsk: string[] = [];
+    for (const name of people) {
+      const existing = contactNames.filter((cn) => this.namesMatch(name, cn));
+      if (existing.length === 1) {
+        await this.linkContactToNote(noteDocId, existing[0]);
+        autoLinked.push(existing[0]);
+      } else {
+        toAsk.push(name);
+      }
+    }
+
+    if (autoLinked.length > 0) {
+      ctx.session.autoLinkedContacts = { noteDocId, names: autoLinked };
+      const buttons = autoLinked.map((cName, idx) => [
+        Markup.button.callback(`Unlink ${cName}`, `unlink_contact:${idx}`),
+      ]);
+      const linked = autoLinked.map((n) => `[[${n}]]`).join(', ');
+      await ctx.reply(`Linked ${linked} to the note.`, Markup.inlineKeyboard(buttons));
+    }
+
+    // 2. Interactive flow for ambiguous/unknown names, plus any context-only
+    //    contact that semantic search surfaced (stored as extra matches).
+    const matches = toAsk.map((name) => ({
       name,
       existing: contactNames.filter((cn) => this.namesMatch(name, cn)),
     }));
+
+    const semantic = await this.findSemanticContacts(
+      noteText,
+      contactNames,
+      [...autoLinked, ...toAsk],
+    );
+    for (const cName of semantic) {
+      matches.push({ name: cName, existing: [cName] });
+    }
+
     ctx.session.pendingPeople = { noteDocId, matches };
 
     for (let personIdx = 0; personIdx < matches.length; personIdx++) {
@@ -310,6 +362,33 @@ export class ActionUpdate {
           ],
         ]));
       }
+    }
+  }
+
+  // Find contacts related to the note by context (not by an explicit name
+  // mention) via Qdrant. Returns contact names above the confidence threshold,
+  // excluding any already handled by name matching. Empty on failure/no index.
+  private async findSemanticContacts(
+    noteText: string,
+    contactNames: string[],
+    alreadyHandled: string[],
+  ): Promise<string[]> {
+    if (!this.embedding || noteText.trim().length < 10) return [];
+    try {
+      const hits = await this.embedding.searchSimilar(noteText, 6);
+      const handled = new Set(alreadyHandled);
+      const result: string[] = [];
+      for (const hit of hits) {
+        if (!hit.docId.startsWith('contacts/')) continue;
+        if (hit.score < ActionUpdate.SEMANTIC_CONTACT_THRESHOLD) continue;
+        const cName = hit.docId.replace('contacts/', '').replace(/\.md$/, '');
+        if (handled.has(cName) || !contactNames.includes(cName)) continue;
+        result.push(cName);
+        handled.add(cName);
+      }
+      return result.slice(0, 2);
+    } catch {
+      return [];
     }
   }
 
@@ -360,15 +439,45 @@ export class ActionUpdate {
     }
 
     await ctx.answerCbQuery();
+    await this.linkContactToNote(noteDocId, contactName);
+    await ctx.editMessageText(`Linked [[${contactName}]] to note.`);
+  }
 
-    // Append wikilink to the note
-    const noteContent = await this.couchSync.readFile(noteDocId);
-    if (noteContent && !noteContent.includes(`[[${contactName}]]`)) {
-      const updated = noteContent.trimEnd() + `\n\n[[${contactName}]]\n`;
-      await this.couchSync.writeFile(noteDocId, updated);
+  @Action(/^unlink_contact:(\d+)$/)
+  async onUnlinkContact(@Ctx() ctx: BotContext): Promise<void> {
+    const callbackData = (ctx.callbackQuery as { data?: string })?.data;
+    const idx = parseInt(callbackData?.replace('unlink_contact:', '') || '', 10);
+    const autoLinked = ctx.session?.autoLinkedContacts;
+    const contactName = autoLinked?.names[idx];
+    if (!autoLinked || !contactName) {
+      await ctx.answerCbQuery('Expired');
+      return;
     }
 
-    await ctx.editMessageText(`Linked [[${contactName}]] to note.`);
+    const noteContent = await this.couchSync.readFile(autoLinked.noteDocId);
+    if (noteContent) {
+      const updated = noteContent
+        .replace(new RegExp(`\\n*\\[\\[${this.escapeRegExp(contactName)}\\]\\]\\n*`), '\n')
+        .trimEnd() + '\n';
+      await this.couchSync.writeFile(autoLinked.noteDocId, updated);
+    }
+
+    autoLinked.names.splice(idx, 1);
+    await ctx.answerCbQuery('Unlinked');
+    if (autoLinked.names.length > 0) {
+      const buttons = autoLinked.names.map((cName, i) => [
+        Markup.button.callback(`Unlink ${cName}`, `unlink_contact:${i}`),
+      ]);
+      const linked = autoLinked.names.map((n) => `[[${n}]]`).join(', ');
+      await ctx.editMessageText(`Linked ${linked} to the note.`, Markup.inlineKeyboard(buttons));
+    } else {
+      ctx.session.autoLinkedContacts = undefined;
+      await ctx.editMessageText(`Unlinked [[${contactName}]].`);
+    }
+  }
+
+  private escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
   // --- Contact wizard actions ---
@@ -626,6 +735,7 @@ export class ActionUpdate {
       ctx.session.pendingMusic = undefined;
       ctx.session.pendingEdit = undefined;
       ctx.session.pendingPeople = undefined;
+      ctx.session.autoLinkedContacts = undefined;
     }
     await ctx.answerCbQuery('Cancelled');
     await ctx.editMessageText('Cancelled.');

@@ -15,7 +15,6 @@ export class AiService {
   private readonly model: string;
   private readonly vaultPath: string;
   private tagCache?: { tags: string[]; at: number };
-  private titleCache?: { titles: string[]; at: number };
   private readonly TAG_CACHE_TTL = 5 * 60_000;
 
   constructor(
@@ -42,11 +41,8 @@ export class AiService {
 
   async classify(text: string): Promise<ClassificationResult> {
     try {
-      const [noteTitles, usedTags] = await Promise.all([
-        this.getExistingNoteTitles(),
-        this.getUsedTags(),
-      ]);
-      const systemPrompt = buildClassifyPrompt(noteTitles, usedTags);
+      const usedTags = await this.getUsedTags();
+      const systemPrompt = buildClassifyPrompt(usedTags);
 
       const response = await this.openai.chat.completions.create({
         model: this.model,
@@ -106,9 +102,6 @@ export class AiService {
             ? raw.projectData.lifeAreas.filter((i: unknown) => typeof i === 'string')
             : undefined,
         } : undefined,
-        relatedNotes: Array.isArray(raw.relatedNotes)
-          ? raw.relatedNotes.filter((i: unknown) => typeof i === 'string')
-          : undefined,
         mentionedPeople: Array.isArray(raw.mentionedPeople)
           ? raw.mentionedPeople.filter((i: unknown) => typeof i === 'string')
           : undefined,
@@ -154,35 +147,6 @@ export class AiService {
       lifeArea: '',
       confidence: 0,
     };
-  }
-
-  private async getExistingNoteTitles(): Promise<string[]> {
-    if (this.titleCache && Date.now() - this.titleCache.at < this.TAG_CACHE_TTL) {
-      return this.titleCache.titles;
-    }
-    try {
-      const ids: string[] = [];
-      for (const prefix of ['inbox/', 'contacts/', 'projects/']) {
-        const found = await this.couchSync.listByPrefix(prefix);
-        ids.push(...found);
-      }
-      const titles = ids.map(id => id.replace(/^[^/]+\//, '').replace('.md', ''));
-      this.titleCache = { titles, at: Date.now() };
-      return titles;
-    } catch {
-      // Fallback to filesystem
-      const titles: string[] = [];
-      for (const dir of ['inbox', 'contacts', 'projects']) {
-        const dirPath = path.join(this.vaultPath, dir);
-        try {
-          const files = await fs.readdir(dirPath);
-          for (const file of files) {
-            if (file.endsWith('.md')) titles.push(file.replace('.md', ''));
-          }
-        } catch { /* skip */ }
-      }
-      return titles;
-    }
   }
 
   private async getUsedTags(): Promise<string[]> {

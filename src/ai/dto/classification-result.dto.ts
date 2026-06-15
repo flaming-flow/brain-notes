@@ -35,6 +35,5 @@ export interface ClassificationResult {
     actionPlan?: string[];
     lifeAreas?: string[];
   };
-  relatedNotes?: string[];
   mentionedPeople?: string[];
 }

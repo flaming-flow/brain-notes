@@ -2,7 +2,6 @@ import { LIFE_AREAS } from '../../shared/constants/life-areas.constant.js';
 import { DEFAULT_TAGS } from '../../shared/constants/tags.constant.js';
 
 export function buildClassifyPrompt(
-  existingNoteTitles: string[],
   usedTags: string[],
 ): string {
   const today = new Date().toISOString().split('T')[0];
@@ -15,11 +14,6 @@ export function buildClassifyPrompt(
   const usedTagsList =
     usedTags.length > 0
       ? `\nТеги, уже используемые в хранилище (ПЕРЕИСПОЛЬЗУЙ их, не плоди дубликаты): ${usedTags.join(', ')}\n`
-      : '';
-
-  const notesList =
-    existingNoteTitles.length > 0
-      ? `\nСуществующие заметки (используй для [[wikilinks]] если уместно):\n${existingNoteTitles.map((t) => `- ${t}`).join('\n')}\n`
       : '';
 
   return `Ты — персональный ассистент по управлению знаниями для цифрового кочевника.
@@ -68,7 +62,6 @@ ${LIFE_AREAS.join(', ')}
 
 ${defaultTagsList}
 ${usedTagsList}
-${notesList}
 
 ## Правила
 
@@ -77,9 +70,8 @@ ${notesList}
 3. Предложи 2-5 тегов. СНАЧАЛА ищи подходящий среди уже используемых тегов (список выше) и переиспользуй его — даже если язык или форма отличаются. Например, если есть тег "поэзия", НЕ создавай "poem" или "стихи" — используй "поэзия". Только если ничего по смыслу не подходит — предложи 1-2 новых тега
 4. Сгенерируй короткий заголовок (3-8 слов) на языке сообщения
 5. Если упоминается контент/рилс/съёмка/сценарий — добавь тег "reels-idea"
-6. Найди 1-3 связанных заметки из списка существующих (по теме, контексту, людям). Добавь в поле "relatedNotes" как массив имён файлов
-7. Если в тексте упоминаются имена людей — добавь в поле "mentionedPeople" как массив имён (именительный падеж, с большой буквы)
-8. confidence от 0.0 до 1.0
+6. Если в тексте упоминаются имена людей — добавь в поле "mentionedPeople" как массив имён (именительный падеж, с большой буквы)
+7. confidence от 0.0 до 1.0
 
 ## Приоритет при неоднозначности
 
@@ -152,7 +144,7 @@ ${notesList}
 Ответь ТОЛЬКО валидным JSON объектом, без другого текста.
 
 Для note (свои мысли):
-{"entityType": "note", "title": "заголовок", "suggestedTags": ["тег1"], "lifeArea": "dance", "confidence": 0.9, "source": "own", "relatedNotes": ["танец-как-способ-жизни"]}
+{"entityType": "note", "title": "заголовок", "suggestedTags": ["тег1"], "lifeArea": "dance", "confidence": 0.9, "source": "own"}
 
 Для note (цитата из книги):
 {"entityType": "note", "title": "о препятствиях", "suggestedTags": ["reflection", "stoicism"], "lifeArea": "philosophy", "confidence": 0.9, "source": "quote", "quoteData": {"author": "Райан Холидей", "bookTitle": "Препятствие — это путь"}}

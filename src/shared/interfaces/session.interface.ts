@@ -87,6 +87,11 @@ export interface PendingPeople {
   matches: { name: string; existing: string[] }[];
 }
 
+export interface AutoLinkedContacts {
+  noteDocId: string;
+  names: string[];
+}
+
 export interface BotSession {
   pendingNote?: PendingNote;
   pendingContact?: PendingContact;
@@ -99,6 +104,7 @@ export interface BotSession {
   templateHint?: 'note' | 'event';
   contentGen?: ContentGeneration;
   pendingPeople?: PendingPeople;
+  autoLinkedContacts?: AutoLinkedContacts;
 }
 
 export type BotContext = Context & { session: BotSession };
