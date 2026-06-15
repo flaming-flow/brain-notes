@@ -58,6 +58,22 @@ export class MessageProcessorService {
       classification.entityType = options.hintEntityType;
     }
 
+    // Freeform/voice messages must never auto-create a contact — that belongs
+    // to the explicit Contact wizard. A classified "contact" is downgraded to a
+    // note; the mentioned person is offered as a contact AFTER the note saves
+    // (auto-linked if they already exist, asked otherwise).
+    if (classification.entityType === 'contact' && options.hintEntityType !== 'contact') {
+      const name = classification.contactData?.name;
+      classification.entityType = 'note';
+      classification.source = 'own';
+      if (name) {
+        classification.mentionedPeople = [
+          ...new Set([...(classification.mentionedPeople ?? []), name]),
+        ];
+      }
+      classification.contactData = undefined;
+    }
+
     // Auto-save types: task, task_list, contact (quick mode)
     if (
       classification.entityType === 'task' ||
