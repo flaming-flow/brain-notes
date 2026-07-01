@@ -674,54 +674,82 @@ export class ActionUpdate {
     const callbackData = (ctx.callbackQuery as { data?: string })?.data;
     const format = callbackData?.replace('gen_format:', '') as ThreadsFormat;
     const gen = ctx.session?.contentGen;
-    if (!gen?.lastTopic) {
-      await ctx.answerCbQuery('No topic');
+    if (!gen?.currentPost) {
+      await ctx.answerCbQuery('No active post');
       return;
     }
+
     await ctx.answerCbQuery(`Switching to ${format}...`);
-    await this.commandUpdate.generateAndReply(ctx, gen.lastTopic, format);
+
+    gen.format = format;
+    gen.messages.push({
+      role: 'user',
+      content: `Rewrite the current post in ${format.toUpperCase()} format, keeping all earlier changes.`,
+    });
+
+    const post = await this.contentAgent.refine(gen.systemPrompt, gen.messages, format);
+    if (!post) {
+      await ctx.reply('Failed to switch format. Try again.');
+      return;
+    }
+
+    gen.messages.push({ role: 'assistant', content: post });
+    gen.currentPost = post;
+    await this.commandUpdate.replyWithPost(ctx, post, gen.sources);
   }
 
   @Action('regen_threads')
   async onRegenThreads(@Ctx() ctx: BotContext): Promise<void> {
     await ctx.answerCbQuery();
     const gen = ctx.session?.contentGen;
-    if (!gen?.lastGenerated) return;
+    if (!gen?.currentPost) return;
 
     gen.awaitingRegenPrompt = true;
 
     await ctx.editMessageText(
-      `Current post:\n\n${gen.lastGenerated}\n\n---\nSend feedback (what to change) or "ok" to regenerate as-is:`,
+      `Current post:\n\n${gen.currentPost}\n\n---\nSend feedback (what to change) or "ok" to regenerate as-is:`,
     );
   }
 
   @Action('save_draft')
   async onSaveDraft(@Ctx() ctx: BotContext): Promise<void> {
     const gen = ctx.session?.contentGen;
-    if (!gen?.lastGenerated) {
+    if (!gen?.currentPost) {
       await ctx.answerCbQuery('Nothing to save');
       return;
     }
 
     const today = new Date().toISOString().split('T')[0];
-    const markdown = `---\ntype: draft\ncontent_type: threads\ncreated: ${today}\nstatus: draft\n---\n\n${gen.lastGenerated}\n`;
+    const markdown = `---\ntype: draft\ncontent_type: threads\ncreated: ${today}\nstatus: draft\n---\n\n${gen.currentPost}\n`;
     await this.couchSync.writeFile(`drafts/threads-${Date.now()}.md`, markdown);
 
+    const saved = gen.currentPost;
     ctx.session.contentGen = undefined;
     await ctx.answerCbQuery('Saved!');
-    await ctx.editMessageText(`Draft saved\n\n${gen.lastGenerated}`);
+    await ctx.editMessageText(`Draft saved\n\n${saved}`);
   }
 
   @Action('save_example')
   async onSaveExample(@Ctx() ctx: BotContext): Promise<void> {
     const gen = ctx.session?.contentGen;
-    if (!gen?.lastGenerated) {
+    if (!gen?.currentPost) {
       await ctx.answerCbQuery('Nothing to save');
       return;
     }
 
-    await this.contentAgent.saveVoiceSample(gen.lastGenerated);
+    await this.contentAgent.saveVoiceSample(gen.currentPost);
+    ctx.session.contentGen = undefined;
     await ctx.answerCbQuery('Saved as voice example!');
+  }
+
+  @Action('gen_cancel')
+  async onGenCancel(@Ctx() ctx: BotContext): Promise<void> {
+    const gen = ctx.session?.contentGen;
+    if (ctx.session) ctx.session.contentGen = undefined;
+    await ctx.answerCbQuery('Cancelled');
+    if (gen?.currentPost) {
+      await ctx.editMessageText(`Cancelled\n\n${gen.currentPost}`);
+    }
   }
 
   // --- Cancel action (works for notes, contacts, voice, music) ---

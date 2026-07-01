@@ -252,17 +252,34 @@ export class CommandUpdate {
 
   async generateAndReply(ctx: BotContext, topic: string, format: ThreadsFormat = 'auto'): Promise<void> {
     await ctx.reply('Generating...');
-    const { post, sources } = await this.contentAgent.generateThreads(topic, format);
+
+    const session = await this.contentAgent.startSession(topic);
+    if (!session) {
+      await ctx.reply('No relevant notes found for this topic. Try /reindex first.');
+      return;
+    }
+
+    const post = await this.contentAgent.generateFirst(
+      session.systemPrompt,
+      session.contextBlock,
+      topic,
+      format,
+    );
 
     ctx.session ??= {} as BotContext['session'];
     ctx.session.contentGen = {
-      lastGenerated: post,
-      lastTopic: topic,
-      lastFormat: format,
-      lastSources: sources,
+      topic,
+      sources: session.sources,
+      systemPrompt: session.systemPrompt,
+      messages: [
+        { role: 'user', content: `Topic: ${topic}` },
+        { role: 'assistant', content: post },
+      ],
+      currentPost: post,
+      format,
     };
 
-    await this.replyWithPost(ctx, post, sources);
+    await this.replyWithPost(ctx, post, session.sources);
   }
 
   replyWithPost(ctx: BotContext, post: string, sources: string[] = []): Promise<void> {
@@ -280,7 +297,10 @@ export class CommandUpdate {
         Markup.button.callback('Save as draft', 'save_draft'),
       ],
       formatButtons,
-      [Markup.button.callback('Save as example', 'save_example')],
+      [
+        Markup.button.callback('Save as example', 'save_example'),
+        Markup.button.callback('Cancel', 'gen_cancel'),
+      ],
     ]);
 
     return ctx.reply(post + sourcesText, keyboard) as unknown as Promise<void>;

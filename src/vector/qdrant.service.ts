@@ -112,6 +112,57 @@ export class QdrantService implements OnModuleInit {
     });
   }
 
+  /** Existing content hash for a doc, or null if the point isn't indexed. */
+  async getContentHash(docId: string): Promise<string | null> {
+    const numericId = this.hashId(docId);
+    const res = await fetch(`${this.baseUrl}/collections/${this.collection}/points`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: [numericId], with_payload: true }),
+    });
+    if (!res.ok) return null;
+
+    const data = (await res.json()) as {
+      result?: Array<{ payload?: Record<string, unknown> }>;
+    };
+    const payload = data.result?.[0]?.payload;
+    // Guard against hash-id collisions: only trust the hash if doc_id matches.
+    if (payload?.doc_id !== docId) return null;
+    return (payload?.content_hash as string) ?? null;
+  }
+
+  /** All indexed points as { docId, contentHash }, paged via scroll. */
+  async scrollDocs(): Promise<Array<{ docId: string; contentHash: string | null }>> {
+    const out: Array<{ docId: string; contentHash: string | null }> = [];
+    let offset: unknown = undefined;
+
+    for (;;) {
+      const res = await fetch(`${this.baseUrl}/collections/${this.collection}/points/scroll`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limit: 256, with_payload: true, with_vector: false, offset }),
+      });
+      if (!res.ok) break;
+
+      const data = (await res.json()) as {
+        result?: {
+          points?: Array<{ payload?: Record<string, unknown> }>;
+          next_page_offset?: unknown;
+        };
+      };
+
+      for (const pt of data.result?.points ?? []) {
+        const docId = pt.payload?.doc_id as string | undefined;
+        if (docId) out.push({ docId, contentHash: (pt.payload?.content_hash as string) ?? null });
+      }
+
+      offset = data.result?.next_page_offset;
+      if (!offset) break;
+    }
+
+    return out;
+  }
+
   private hashId(id: string): number {
     let hash = 0;
     for (let i = 0; i < id.length; i++) {

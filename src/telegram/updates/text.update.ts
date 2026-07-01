@@ -8,6 +8,7 @@ import { VaultWriterService } from '../../vault/vault-writer.service.js';
 import { VaultReaderService } from '../../vault/vault-reader.service.js';
 import { CommandUpdate } from './command.update.js';
 import { ContentAgentService } from '../../content/content-agent.service.js';
+import type { ThreadsFormat } from '../../content/prompts/threads.prompt.js';
 import { CouchDBSyncService } from '../../couchdb/couchdb-sync.service.js';
 import { findSimilarTags } from '../utils/tag-similarity.util.js';
 import type { BotContext } from '../../shared/interfaces/session.interface.js';
@@ -414,17 +415,25 @@ export class TextUpdate {
 
     await ctx.reply('Regenerating...');
 
-    if (text.toLowerCase() === 'ok') {
-      await this.commandUpdate.generateAndReply(ctx, gen.lastTopic || '', (gen.lastFormat as any) || 'auto');
-    } else {
-      const post = await this.contentAgent.regenerateWithFeedback(
-        gen.lastGenerated || '',
-        text,
-        (gen.lastFormat as any) || undefined,
-      );
-      gen.lastGenerated = post;
-      await this.commandUpdate.replyWithPost(ctx, post, gen.lastSources);
+    const instruction = text.toLowerCase() === 'ok'
+      ? 'Write a fresh variant of the current post — same meaning and topic, different wording and angle.'
+      : text;
+
+    gen.messages.push({ role: 'user', content: instruction });
+
+    const post = await this.contentAgent.refine(
+      gen.systemPrompt,
+      gen.messages,
+      gen.format as ThreadsFormat,
+    );
+    if (!post) {
+      await ctx.reply('Failed to regenerate. Try again.');
+      return;
     }
+
+    gen.messages.push({ role: 'assistant', content: post });
+    gen.currentPost = post;
+    await this.commandUpdate.replyWithPost(ctx, post, gen.sources);
   }
 
   private normalizeHandle(input: string, platform?: string): string {

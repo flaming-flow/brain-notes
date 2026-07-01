@@ -69,11 +69,18 @@ export interface SavedLocation {
   timestamp: number;
 }
 
+export interface ContentGenMessage {
+  role: 'assistant' | 'user';
+  content: string;
+}
+
 export interface ContentGeneration {
-  lastGenerated?: string;
-  lastTopic?: string;
-  lastFormat?: string;
-  lastSources?: string[];
+  topic: string;
+  sources: string[];
+  systemPrompt: string; // persona + rules + voice samples + notes context, built once
+  messages: ContentGenMessage[]; // transcript: user topic -> assistant v1 -> user feedback -> ...
+  currentPost: string; // last assistant message, used by Save actions
+  format: string;
   awaitingRegenPrompt?: boolean;
 }
 

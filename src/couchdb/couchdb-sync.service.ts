@@ -219,6 +219,53 @@ export class CouchDBSyncService implements OnModuleInit {
     }
   }
 
+  /** Current database update sequence — used to start the feed from "now". */
+  async getUpdateSeq(): Promise<string> {
+    const res = await fetch(this.baseUrl, { headers: this.headers });
+    if (!res.ok) return '0';
+    const info = (await res.json()) as { update_seq?: string | number };
+    return String(info.update_seq ?? '0');
+  }
+
+  /** Longpoll the changes feed; blocks up to timeoutMs, then returns whatever arrived. */
+  async changes(
+    since: string,
+    timeoutMs: number,
+  ): Promise<{ results: Array<{ id: string; seq: string; deleted?: boolean }>; last_seq: string }> {
+    const url =
+      `${this.baseUrl}/_changes?feed=longpoll` +
+      `&since=${encodeURIComponent(since)}&timeout=${timeoutMs}`;
+    const res = await fetch(url, { headers: this.headers });
+    if (!res.ok) {
+      throw new Error(`CouchDB _changes failed: ${res.status} ${res.statusText}`);
+    }
+    return (await res.json()) as {
+      results: Array<{ id: string; seq: string; deleted?: boolean }>;
+      last_seq: string;
+    };
+  }
+
+  /** Persisted vector-sync checkpoint in a non-replicated _local doc. */
+  async readSyncSeq(): Promise<string | null> {
+    const res = await fetch(`${this.baseUrl}/_local/qdrant_vector_sync`, { headers: this.headers });
+    if (!res.ok) return null;
+    const doc = (await res.json()) as { seq?: string };
+    return doc.seq ?? null;
+  }
+
+  async writeSyncSeq(seq: string): Promise<void> {
+    const existing = await fetch(`${this.baseUrl}/_local/qdrant_vector_sync`, { headers: this.headers });
+    let rev: string | undefined;
+    if (existing.ok) {
+      rev = ((await existing.json()) as { _rev?: string })._rev;
+    }
+    await fetch(`${this.baseUrl}/_local/qdrant_vector_sync`, {
+      method: 'PUT',
+      headers: this.headers,
+      body: JSON.stringify(rev ? { _rev: rev, seq } : { seq }),
+    });
+  }
+
   private chunkId(content: string): string {
     const hash = createHash('sha256').update(content).digest('hex').slice(0, 40);
     return `h:${hash}`;
