@@ -38,7 +38,7 @@ export class ContentAgentService {
   }
 
   async ask(question: string): Promise<{ answer: string; sources: string[] }> {
-    const results = await this.embedding.searchSimilar(question, 5);
+    const results = await this.embedding.searchReranked(question, 6);
 
     if (results.length === 0) {
       return { answer: 'No relevant notes found.', sources: [] };
@@ -127,7 +127,7 @@ export class ContentAgentService {
     if (!topic) return null;
 
     const [results, voiceSamples] = await Promise.all([
-      this.embedding.searchSimilar(topic, CONTEXT_NOTES_COUNT),
+      this.embedding.searchReranked(topic, CONTEXT_NOTES_COUNT),
       this.loadVoiceSamples(),
     ]);
 

@@ -2,15 +2,37 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash } from 'node:crypto';
 import OpenAI from 'openai';
-import { QdrantService } from './qdrant.service.js';
+import { QdrantService, type SparseVector } from './qdrant.service.js';
 import { CouchDBSyncService } from '../couchdb/couchdb-sync.service.js';
 
 const NOTE_PREFIXES = ['inbox/', 'contacts/', 'projects/'];
 const FEED_TIMEOUT_MS = 60000;
 const FEED_BACKOFF_MS = 5000;
+const RERANK_POOL = 30;
 
 function isNoteId(id: string): boolean {
   return id.endsWith('.md') && NOTE_PREFIXES.some((p) => id.startsWith(p));
+}
+
+/** Stable 32-bit FNV-1a hash — maps a token to a Qdrant sparse-vector index. */
+function fnv1a(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+/** BM25-style sparse vector: token-frequency counts keyed by hashed token id. */
+function buildSparse(text: string): SparseVector {
+  const counts = new Map<number, number>();
+  const tokens = text.toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) ?? [];
+  for (const t of tokens) {
+    const idx = fnv1a(t);
+    counts.set(idx, (counts.get(idx) ?? 0) + 1);
+  }
+  return { indices: [...counts.keys()], values: [...counts.values()] };
 }
 
 // Cosine similarity above which an existing tag is auto-selected for a note.
@@ -24,6 +46,7 @@ export class EmbeddingService implements OnModuleInit {
   private readonly logger = new Logger(EmbeddingService.name);
   private readonly openai: OpenAI;
   private readonly model = 'text-embedding-3-small';
+  private readonly rerankModel: string;
   private readonly tagVectorCache = new Map<string, number[]>();
 
   static readonly TAG_SIM_THRESHOLD = TAG_SIM_THRESHOLD;
@@ -37,6 +60,7 @@ export class EmbeddingService implements OnModuleInit {
     this.openai = new OpenAI({
       apiKey: this.config.getOrThrow<string>('ai.openai.apiKey'),
     });
+    this.rerankModel = this.config.get<string>('ai.openai.model', 'gpt-4o-mini');
   }
 
   onModuleInit(): void {
@@ -109,13 +133,14 @@ export class EmbeddingService implements OnModuleInit {
       if ((await this.qdrant.getContentHash(docId)) === contentHash) return;
 
       const vector = await this.embed(body);
+      const sparse = buildSparse(body);
 
       // Extract metadata from frontmatter
       const typeMatch = content.match(/^type:\s*(.+)$/m);
       const areaMatch = content.match(/^life_area:\s*(.+)$/m);
       const tagsMatch = content.match(/^tags:\s*\[(.+)\]$/m);
 
-      await this.qdrant.upsert(docId, vector, {
+      await this.qdrant.upsert(docId, vector, sparse, {
         type: typeMatch?.[1]?.trim() || 'note',
         life_area: areaMatch?.[1]?.trim() || '',
         tags: tagsMatch?.[1]?.trim() || '',
@@ -139,13 +164,66 @@ export class EmbeddingService implements OnModuleInit {
 
   async searchSimilar(query: string, limit = 5): Promise<Array<{ docId: string; score: number; preview: string }>> {
     const vector = await this.embed(query);
-    const results = await this.qdrant.search(vector, limit);
+    const sparse = buildSparse(query);
+    const results = await this.qdrant.queryHybrid(vector, sparse, limit);
     this.logger.log(`Search "${query.slice(0, 50)}": ${results.map((r) => `${r.id}(${r.score.toFixed(2)})`).join(', ')}`);
     return results.map((r) => ({
       docId: r.id,
       score: r.score,
       preview: (r.payload.preview as string) || '',
     }));
+  }
+
+  /**
+   * Retrieve a wide candidate pool via hybrid search, then reorder with an
+   * LLM reranker and return the best `limit`. Falls back to hybrid order.
+   */
+  async searchReranked(
+    query: string,
+    limit = 5,
+  ): Promise<Array<{ docId: string; score: number; preview: string }>> {
+    const candidates = await this.searchSimilar(query, RERANK_POOL);
+    if (candidates.length <= limit) return candidates;
+
+    try {
+      const list = candidates
+        .map((c, i) => `[${i}] ${c.docId.replace(/^[^/]+\//, '').replace('.md', '')}: ${c.preview}`)
+        .join('\n');
+
+      const response = await this.openai.chat.completions.create({
+        model: this.rerankModel,
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You rerank notes by how well they help answer the query. ' +
+              'Return ONLY a JSON array of candidate indices, most relevant first, ' +
+              'including at most the requested count. Omit clearly irrelevant notes.',
+          },
+          {
+            role: 'user',
+            content: `Query: ${query}\n\nCandidates:\n${list}\n\nReturn up to ${limit} indices as a JSON array, e.g. [3,0,7].`,
+          },
+        ],
+        max_tokens: 120,
+        temperature: 0,
+      });
+
+      const raw = response.choices[0]?.message?.content ?? '';
+      const match = raw.match(/\[[\s\S]*?\]/);
+      const order = match ? (JSON.parse(match[0]) as number[]) : [];
+
+      const picked = order
+        .filter((i) => Number.isInteger(i) && i >= 0 && i < candidates.length)
+        .slice(0, limit)
+        .map((i) => candidates[i]);
+
+      this.logger.log(`Rerank "${query.slice(0, 40)}": ${picked.map((p) => p.docId).join(', ')}`);
+      return picked.length > 0 ? picked : candidates.slice(0, limit);
+    } catch (err) {
+      this.logger.warn(`Rerank failed: ${(err as Error).message}`);
+      return candidates.slice(0, limit);
+    }
   }
 
   /**

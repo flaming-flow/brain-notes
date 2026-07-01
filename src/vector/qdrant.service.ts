@@ -13,6 +13,11 @@ interface SearchResult {
   payload: Record<string, unknown>;
 }
 
+export interface SparseVector {
+  indices: number[];
+  values: number[];
+}
+
 @Injectable()
 export class QdrantService implements OnModuleInit {
   private readonly logger = new Logger(QdrantService.name);
@@ -32,8 +37,19 @@ export class QdrantService implements OnModuleInit {
   private async ensureCollection(): Promise<void> {
     const res = await fetch(`${this.baseUrl}/collections/${this.collection}`);
     if (res.ok) {
-      this.logger.log(`Qdrant collection "${this.collection}" exists`);
-      return;
+      const data = (await res.json()) as {
+        result?: { config?: { params?: { vectors?: Record<string, unknown>; sparse_vectors?: Record<string, unknown> } } };
+      };
+      const params = data.result?.config?.params;
+      const isHybrid = !!params?.vectors?.dense && !!params?.sparse_vectors?.text;
+      if (isHybrid) {
+        this.logger.log(`Qdrant collection "${this.collection}" exists (hybrid)`);
+        return;
+      }
+      // Legacy single-vector schema — recreate for hybrid search.
+      // Data is rebuilt from CouchDB, so a follow-up /reindex is required.
+      this.logger.warn(`Recreating "${this.collection}" for hybrid search — run /reindex to repopulate`);
+      await fetch(`${this.baseUrl}/collections/${this.collection}`, { method: 'DELETE' });
     }
 
     const createRes = await fetch(`${this.baseUrl}/collections/${this.collection}`, {
@@ -41,8 +57,10 @@ export class QdrantService implements OnModuleInit {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         vectors: {
-          size: this.vectorSize,
-          distance: 'Cosine',
+          dense: { size: this.vectorSize, distance: 'Cosine' },
+        },
+        sparse_vectors: {
+          text: { modifier: 'idf' },
         },
       }),
     });
@@ -52,10 +70,15 @@ export class QdrantService implements OnModuleInit {
       throw new Error(`Failed to create Qdrant collection: ${createRes.status} ${body}`);
     }
 
-    this.logger.log(`Qdrant collection "${this.collection}" created`);
+    this.logger.log(`Qdrant collection "${this.collection}" created (hybrid)`);
   }
 
-  async upsert(id: string, vector: number[], payload: Record<string, unknown>): Promise<void> {
+  async upsert(
+    id: string,
+    dense: number[],
+    sparse: SparseVector,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
     // Qdrant needs numeric or UUID ids, use hash of string id
     const numericId = this.hashId(id);
 
@@ -66,7 +89,7 @@ export class QdrantService implements OnModuleInit {
         points: [
           {
             id: numericId,
-            vector,
+            vector: { dense, text: { indices: sparse.indices, values: sparse.values } },
             payload: { ...payload, doc_id: id },
           },
         ],
@@ -79,24 +102,42 @@ export class QdrantService implements OnModuleInit {
     }
   }
 
-  async search(vector: number[], limit = 5): Promise<SearchResult[]> {
-    const res = await fetch(`${this.baseUrl}/collections/${this.collection}/points/search`, {
+  /**
+   * Hybrid retrieval: dense (semantic) + sparse (BM25/keyword) prefetch,
+   * merged with Reciprocal Rank Fusion. Falls back to dense-only when the
+   * query has no usable sparse terms.
+   */
+  async queryHybrid(dense: number[], sparse: SparseVector, limit = 5): Promise<SearchResult[]> {
+    const hasSparse = sparse.indices.length > 0;
+
+    const body = hasSparse
+      ? {
+          prefetch: [
+            { query: dense, using: 'dense', limit: limit * 4 },
+            { query: { indices: sparse.indices, values: sparse.values }, using: 'text', limit: limit * 4 },
+          ],
+          query: { fusion: 'rrf' },
+          limit,
+          with_payload: true,
+        }
+      : { query: dense, using: 'dense', limit, with_payload: true };
+
+    const res = await fetch(`${this.baseUrl}/collections/${this.collection}/points/query`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        vector,
-        limit,
-        with_payload: true,
-      }),
+      body: JSON.stringify(body),
     });
 
-    if (!res.ok) return [];
+    if (!res.ok) {
+      this.logger.warn(`Qdrant query failed: ${res.status} ${await res.text()}`);
+      return [];
+    }
 
     const data = (await res.json()) as {
-      result: Array<{ id: number; score: number; payload: Record<string, unknown> }>;
+      result?: { points?: Array<{ id: number; score: number; payload: Record<string, unknown> }> };
     };
 
-    return data.result.map((r) => ({
+    return (data.result?.points ?? []).map((r) => ({
       id: (r.payload.doc_id as string) || String(r.id),
       score: r.score,
       payload: r.payload,
