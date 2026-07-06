@@ -9,6 +9,9 @@ const NOTE_PREFIXES = ['inbox/', 'contacts/', 'projects/'];
 const FEED_TIMEOUT_MS = 60000;
 const FEED_BACKOFF_MS = 5000;
 const RERANK_POOL = 30;
+// Wide pool for whole-corpus ranking (/ask). Covers the entire vault at current
+// scale; when notes grow past this, the lowest-scoring tail simply isn't ranked.
+const WIDE_POOL = 500;
 
 // Target chunk size (~350 tokens). Notes are split into passages so retrieval
 // matches the relevant part instead of a diluted whole-note embedding, and the
@@ -275,6 +278,23 @@ export class EmbeddingService implements OnModuleInit {
       this.logger.warn(`Rerank failed: ${(err as Error).message}`);
       return candidates.slice(0, limit);
     }
+  }
+
+  /**
+   * Relevance score of every indexed note vs the query, deduped to each note's
+   * best-matching chunk, sorted high→low. Reuses stored embeddings (one query
+   * embedding + a wide Qdrant search) so ranking the whole vault stays cheap.
+   */
+  async rankAllNotes(query: string): Promise<Array<{ docId: string; score: number }>> {
+    const hits = await this.searchSimilar(query, WIDE_POOL);
+    const best = new Map<string, number>();
+    for (const h of hits) {
+      const cur = best.get(h.docId);
+      if (cur === undefined || h.score > cur) best.set(h.docId, h.score);
+    }
+    return [...best.entries()]
+      .map(([docId, score]) => ({ docId, score }))
+      .sort((a, b) => b.score - a.score);
   }
 
   /**

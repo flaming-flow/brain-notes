@@ -22,12 +22,25 @@ const VOICE_SAMPLE_COUNT = 5;
 const CONTEXT_NOTES_COUNT = 8;
 const CONTEXT_NOTE_MAX_CHARS = 800;
 
+// /ask feeds the WHOLE diary, ordered by relevance. Full-text notes fill this
+// char budget (~50K tokens, cheap on modern models); once the vault outgrows it,
+// the least-relevant tail degrades to one-line digests instead of being dropped —
+// so the agent still knows every note exists. Per-note cap stops one long note
+// from eating the budget.
+const ASK_CONTEXT_BUDGET_CHARS = 200_000;
+const ASK_NOTE_MAX_CHARS = 4_000;
+const ASK_NOTE_PREFIXES = ['inbox/', 'contacts/', 'projects/', 'books/'];
+const ASK_SOURCE_LIMIT = 10;
+
 const GROUNDED_ANSWER_PROMPT =
-  'You are a personal knowledge assistant. Answer STRICTLY from the notes provided below.\n' +
+  'You are the author\'s personal knowledge assistant with access to their whole diary below.\n' +
   'Rules:\n' +
   '- Use ONLY facts present in the notes. Never invent names, dates, numbers, or claims.\n' +
   '- After each statement, cite its source note title in square brackets, e.g. [note-title].\n' +
-  "- If the notes don't contain the answer, say so plainly and don't guess.\n" +
+  '- Synthesize across notes: connect related ones, and explicitly point out shifts of focus, ' +
+  'changes of mind, or contradictions over time when they bear on the question.\n' +
+  "- If NO note directly addresses the question, say plainly that the notes don't cover it and STOP. " +
+  'Do NOT substitute loosely related notes as a consolation answer.\n' +
   "- Preserve the author's tone: if a note is ironic or sarcastic, don't read it literally.\n" +
   '- Answer in the same language as the question. Be concise.';
 
@@ -60,17 +73,49 @@ export class ContentAgentService {
   }
 
   async ask(question: string): Promise<{ answer: string; sources: string[] }> {
-    const results = await this.embedding.searchReranked(question, 6);
+    // Whole-diary context: rank every note by relevance (reusing stored
+    // embeddings), then feed all of them ordered high→low. Full text fills the
+    // budget; any overflow tail becomes a one-line digest so nothing is hidden.
+    const ranked = await this.embedding.rankAllNotes(question);
+    const scoreById = new Map(ranked.map((r) => [r.docId, r.score]));
 
-    if (results.length === 0) {
-      return { answer: 'No relevant notes found.', sources: [] };
+    const allIds = new Set<string>();
+    for (const prefix of ASK_NOTE_PREFIXES) {
+      for (const id of await this.couchSync.listByPrefix(prefix)) {
+        if (id.endsWith('.md')) allIds.add(id);
+      }
+    }
+    if (allIds.size === 0) {
+      return { answer: 'No notes yet.', sources: [] };
     }
 
-    // Ground on the exact retrieved passages, titled by their note.
-    const context = results
-      .map((r) => `### ${r.docId.replace('.md', '').replace(/^[^/]+\//, '')}\n${r.preview}`)
-      .join('\n\n');
-    const sourceIds = [...new Set(results.map((r) => r.docId))];
+    // Relevance order; notes missing from the index (not yet embedded) go last.
+    const ordered = [...allIds].sort(
+      (a, b) => (scoreById.get(b) ?? -1) - (scoreById.get(a) ?? -1),
+    );
+
+    const full: string[] = [];
+    const digest: string[] = [];
+    let used = 0;
+    for (const id of ordered) {
+      const note = await this.loadNote(id);
+      if (!note) continue;
+      if (used < ASK_CONTEXT_BUDGET_CHARS) {
+        const block = `### ${note.title}\n${note.body.slice(0, ASK_NOTE_MAX_CHARS)}`;
+        full.push(block);
+        used += block.length;
+      } else {
+        const snippet = note.body.replace(/\s+/g, ' ').trim().slice(0, 120);
+        digest.push(`- ${note.title}: ${snippet}`);
+      }
+    }
+
+    const context =
+      full.join('\n\n') +
+      (digest.length
+        ? `\n\n---\nOther notes in the diary (title + snippet; mention only if relevant):\n${digest.join('\n')}`
+        : '');
+    const sourceIds = ranked.slice(0, ASK_SOURCE_LIMIT).map((r) => r.docId);
 
     const draft = await this.chat(
       this.askModel,
@@ -394,32 +439,31 @@ export class ContentAgentService {
 
   private async buildContext(docIds: string[]): Promise<string> {
     const parts: string[] = [];
-
     for (const id of docIds) {
-      const content = await this.couchSync.readFile(id);
-      if (!content) continue;
+      const note = await this.loadNote(id);
+      if (note) parts.push(`### ${note.title}\n${note.body.slice(0, CONTEXT_NOTE_MAX_CHARS)}`);
+    }
+    return parts.join('\n\n');
+  }
 
-      const title = id.replace('.md', '').replace(/^[^/]+\//, '');
-      let body: string;
+  /** Read a note from CouchDB, strip frontmatter (keeping contact fields), return title + body. */
+  private async loadNote(id: string): Promise<{ title: string; body: string } | null> {
+    const content = await this.couchSync.readFile(id);
+    if (!content) return null;
 
-      if (id.startsWith('contacts/')) {
-        // Include frontmatter for contacts
-        const name = content.match(/^name:\s*"?(.+?)"?\s*$/m)?.[1] || '';
-        const context = content.match(/^context:\s*"?(.+?)"?\s*$/m)?.[1] || '';
-        const cityMet = content.match(/^city_met:\s*"?(.+?)"?\s*$/m)?.[1] || '';
-        const phone = content.match(/^phone:\s*"?(.+?)"?\s*$/m)?.[1] || '';
-        const bodyMatch = content.match(/^---\n[\s\S]*?\n---\n([\s\S]*)$/);
-        const noteBody = bodyMatch?.[1]?.trim() || '';
-        const meta = [name, context, cityMet, phone].filter(Boolean).join('. ');
-        body = meta + (noteBody ? '\n' + noteBody : '');
-      } else {
-        const bodyMatch = content.match(/^---\n[\s\S]*?\n---\n([\s\S]*)$/);
-        body = bodyMatch?.[1]?.trim() || content;
-      }
+    const title = id.replace('.md', '').replace(/^[^/]+\//, '');
+    const bodyMatch = content.match(/^---\n[\s\S]*?\n---\n([\s\S]*)$/);
 
-      parts.push(`### ${title}\n${body.slice(0, CONTEXT_NOTE_MAX_CHARS)}`);
+    if (id.startsWith('contacts/')) {
+      const name = content.match(/^name:\s*"?(.+?)"?\s*$/m)?.[1] || '';
+      const context = content.match(/^context:\s*"?(.+?)"?\s*$/m)?.[1] || '';
+      const cityMet = content.match(/^city_met:\s*"?(.+?)"?\s*$/m)?.[1] || '';
+      const phone = content.match(/^phone:\s*"?(.+?)"?\s*$/m)?.[1] || '';
+      const noteBody = bodyMatch?.[1]?.trim() || '';
+      const meta = [name, context, cityMet, phone].filter(Boolean).join('. ');
+      return { title, body: meta + (noteBody ? '\n' + noteBody : '') };
     }
 
-    return parts.join('\n\n');
+    return { title, body: bodyMatch?.[1]?.trim() || content };
   }
 }
