@@ -669,6 +669,14 @@ export class ActionUpdate {
     await this.commandUpdate.generateAndReply(ctx, topic);
   }
 
+  @Action('gen_skip_unpack')
+  async onGenSkipUnpack(@Ctx() ctx: BotContext): Promise<void> {
+    await ctx.answerCbQuery();
+    const gen = ctx.session?.contentGen;
+    if (!gen?.awaitingUnpackAnswers) return;
+    await this.commandUpdate.runGeneration(ctx);
+  }
+
   @Action(/^gen_format:.+$/)
   async onGenFormat(@Ctx() ctx: BotContext): Promise<void> {
     const callbackData = (ctx.callbackQuery as { data?: string })?.data;

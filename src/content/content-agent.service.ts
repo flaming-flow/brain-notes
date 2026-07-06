@@ -10,11 +10,15 @@ import {
   buildCritiqueRevisePrompt,
   buildRefinePrompt,
   buildTopicSuggestPrompt,
+  buildUnpackPrompt,
+  buildVoiceProfilePrompt,
   type ThreadsFormat,
 } from './prompts/threads.prompt.js';
 import type { ContentGenMessage } from '../shared/interfaces/session.interface.js';
 
 const VOICE_SAMPLES_PREFIX = 'voice-samples/';
+const VOICE_PROFILE_ID = 'voice-profile/profile.md';
+const VOICE_SAMPLE_COUNT = 5;
 const CONTEXT_NOTES_COUNT = 8;
 const CONTEXT_NOTE_MAX_CHARS = 800;
 
@@ -39,6 +43,7 @@ export class ContentAgentService {
   private readonly logger = new Logger(ContentAgentService.name);
   private readonly openai: OpenAI;
   private readonly model: string;
+  private readonly askModel: string;
   private readonly contentModel: string;
 
   constructor(
@@ -50,6 +55,7 @@ export class ContentAgentService {
       apiKey: this.config.getOrThrow<string>('ai.openai.apiKey'),
     });
     this.model = this.config.get<string>('ai.openai.model', 'gpt-4o-mini');
+    this.askModel = this.config.get<string>('ai.openai.askModel', 'gpt-5-mini');
     this.contentModel = this.config.get<string>('ai.openai.contentModel', 'gpt-4.1-mini');
   }
 
@@ -67,7 +73,7 @@ export class ContentAgentService {
     const sourceIds = [...new Set(results.map((r) => r.docId))];
 
     const draft = await this.chat(
-      this.model,
+      this.askModel,
       GROUNDED_ANSWER_PROMPT,
       `My notes:\n\n${context}\n\n---\n\nQuestion: ${question}`,
       0.1,
@@ -76,7 +82,7 @@ export class ContentAgentService {
 
     // Verification pass: strip any claim the notes don't support.
     const verified = await this.chat(
-      this.model,
+      this.askModel,
       VERIFY_ANSWER_PROMPT,
       `Notes:\n\n${context}\n\n---\n\nQuestion: ${question}\n\nDraft answer:\n${draft}`,
       0,
@@ -138,14 +144,18 @@ export class ContentAgentService {
    * Build a fresh generation session for a topic: retrieves note context once
    * and composes the system prompt reused across all later refinements.
    */
-  async startSession(
-    topic: string,
-  ): Promise<{ systemPrompt: string; contextBlock: string; sources: string[] } | null> {
+  async startSession(topic: string): Promise<{
+    systemPrompt: string;
+    contextBlock: string;
+    sources: string[];
+    voiceSamples: string[];
+  } | null> {
     if (!topic) return null;
 
-    const [results, voiceSamples] = await Promise.all([
+    const [results, voiceSamples, voiceProfile] = await Promise.all([
       this.embedding.searchReranked(topic, CONTEXT_NOTES_COUNT),
-      this.loadVoiceSamples(),
+      this.loadVoiceSamples(topic),
+      this.loadVoiceProfile(),
     ]);
 
     const sourceIds = [...new Set(results.map((r) => r.docId))];
@@ -157,25 +167,57 @@ export class ContentAgentService {
       .map((id) => id.replace('.md', '').replace(/^[^/]+\//, ''));
 
     return {
-      systemPrompt: buildSystemPrompt(contextBlock, voiceSamples),
+      systemPrompt: buildSystemPrompt(contextBlock, voiceSamples, voiceProfile),
       contextBlock,
       sources,
+      voiceSamples,
     };
   }
 
   /**
+   * Generate 2-4 clarifying questions to pull specific/personal material out of
+   * the author before writing — the notes are usually incomplete. Empty on failure.
+   */
+  async buildUnpackQuestions(topic: string, contextBlock: string): Promise<string[]> {
+    try {
+      const raw = await this.chat(
+        this.model,
+        buildUnpackPrompt(),
+        `Topic: ${topic}\n\nNotes:\n${contextBlock}`,
+        0.7,
+        300,
+      );
+      const match = raw.match(/\[[\s\S]*\]/);
+      if (!match) return [];
+      const questions = JSON.parse(match[0]) as string[];
+      return questions.filter((q) => typeof q === 'string' && q.trim()).slice(0, 4);
+    } catch (err) {
+      this.logger.warn(`Unpack questions failed: ${(err as Error).message}`);
+      return [];
+    }
+  }
+
+  /**
    * First post for a session: plan the angle, draft, then critique-and-revise.
+   * `enrichment` = the author's fresh answers to unpack questions (prioritized).
+   * `voiceSamples` are passed to the critic so it edits toward the author's voice.
    */
   async generateFirst(
     systemPrompt: string,
     contextBlock: string,
     topic: string,
     format: ThreadsFormat = 'auto',
+    enrichment = '',
+    voiceSamples: string[] = [],
   ): Promise<string> {
+    const enrichBlock = enrichment
+      ? `\n\nAuthor's fresh answers (specific and personal — prioritize these over the notes):\n${enrichment}`
+      : '';
+
     const plan = await this.chat(
       this.model,
       buildPlanPrompt(),
-      `Topic: ${topic}\n\nNotes:\n${contextBlock}`,
+      `Topic: ${topic}\n\nNotes:\n${contextBlock}${enrichBlock}`,
       0.8,
       400,
     );
@@ -183,16 +225,16 @@ export class ContentAgentService {
     const draft = await this.chat(
       this.contentModel,
       systemPrompt,
-      `Topic: ${topic}\n\n${buildFormatInstruction(format)}\n\nStrategist brief:\n${plan}\n\nWrite the post now.`,
-      0.75,
+      `Topic: ${topic}\n\n${buildFormatInstruction(format)}\n\nStrategist brief:\n${plan}${enrichBlock}\n\nWrite the post now.`,
+      0.9,
       500,
     );
 
     const final = await this.chat(
       this.contentModel,
-      buildCritiqueRevisePrompt(format),
-      `Notes:\n${contextBlock}\n\nDraft:\n${draft}`,
-      0.6,
+      buildCritiqueRevisePrompt(format, voiceSamples),
+      `Notes:\n${contextBlock}${enrichBlock}\n\nDraft:\n${draft}`,
+      0.3,
       500,
     );
 
@@ -221,6 +263,13 @@ export class ContentAgentService {
     return response.choices[0]?.message?.content?.trim() || '';
   }
 
+  /** Reasoning models (o-series, gpt-5*) reject `temperature` and use
+   *  `max_completion_tokens`; they also spend part of that budget on hidden
+   *  reasoning, so give them extra headroom. */
+  private static isReasoningModel(model: string): boolean {
+    return /^(o\d|gpt-5)/i.test(model);
+  }
+
   private async chat(
     model: string,
     system: string,
@@ -228,16 +277,24 @@ export class ContentAgentService {
     temperature: number,
     maxTokens: number,
   ): Promise<string> {
-    const response = await this.openai.chat.completions.create({
-      model,
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: user },
-      ],
-      max_tokens: maxTokens,
-      temperature,
-    });
-    return response.choices[0]?.message?.content?.trim() || '';
+    const messages = [
+      { role: 'system' as const, content: system },
+      { role: 'user' as const, content: user },
+    ];
+
+    const params: Record<string, unknown> = { model, messages };
+    if (ContentAgentService.isReasoningModel(model)) {
+      params.max_completion_tokens = maxTokens + 2000;
+    } else {
+      params.max_tokens = maxTokens;
+      params.temperature = temperature;
+    }
+
+    const response = await this.openai.chat.completions.create(
+      params as unknown as Parameters<typeof this.openai.chat.completions.create>[0],
+    );
+    return (response as { choices?: Array<{ message?: { content?: string } }> })
+      .choices?.[0]?.message?.content?.trim() || '';
   }
 
   async saveVoiceSample(content: string): Promise<string> {
@@ -246,6 +303,8 @@ export class ContentAgentService {
     const markdown = `---\ntype: voice-sample\ncreated: ${today}\n---\n\n${content}\n`;
     await this.couchSync.writeFile(id, markdown);
     this.logger.log(`Saved voice sample: ${id}`);
+    // Refresh the distilled voice profile in the background.
+    void this.refreshVoiceProfile();
     return id;
   }
 
@@ -258,20 +317,79 @@ export class ContentAgentService {
     return this.couchSync.listByPrefix(VOICE_SAMPLES_PREFIX);
   }
 
-  private async loadVoiceSamples(): Promise<string[]> {
+  /**
+   * Load up to VOICE_SAMPLE_COUNT voice samples. When a topic is given, pick the
+   * samples most SIMILAR to it (better voice transfer than plain recency —
+   * LaMP benchmark); falls back to the latest N on failure or no topic.
+   */
+  private async loadVoiceSamples(topic?: string): Promise<string[]> {
     const ids = await this.couchSync.listByPrefix(VOICE_SAMPLES_PREFIX);
-    const samples: string[] = [];
+    const bodies: string[] = [];
 
-    for (const id of ids.slice(-5)) {
+    for (const id of ids) {
       const content = await this.couchSync.readFile(id);
       if (!content) continue;
-
       const bodyMatch = content.match(/^---\n[\s\S]*?\n---\n([\s\S]*)$/);
       const body = bodyMatch?.[1]?.trim() || content;
-      if (body) samples.push(body);
+      if (body) bodies.push(body);
     }
 
-    return samples;
+    if (bodies.length <= VOICE_SAMPLE_COUNT) return bodies;
+
+    if (topic) {
+      const order = await this.embedding.rankTexts(topic, bodies);
+      if (order.length > 0) {
+        return order.slice(0, VOICE_SAMPLE_COUNT).map((i) => bodies[i]);
+      }
+    }
+    return bodies.slice(-VOICE_SAMPLE_COUNT);
+  }
+
+  private async loadVoiceProfile(): Promise<string> {
+    const content = await this.couchSync.readFile(VOICE_PROFILE_ID);
+    if (!content) return '';
+    const bodyMatch = content.match(/^---\n[\s\S]*?\n---\n([\s\S]*)$/);
+    return bodyMatch?.[1]?.trim() || content.trim();
+  }
+
+  /**
+   * Distill saved voice samples into a compact style profile (POPI-style: a
+   * short descriptor transfers voice better than dumping raw examples). Stored
+   * in CouchDB, injected into the generation system prompt. Best-effort.
+   */
+  async refreshVoiceProfile(): Promise<void> {
+    try {
+      const ids = await this.couchSync.listByPrefix(VOICE_SAMPLES_PREFIX);
+      if (ids.length < 3) return; // not enough signal yet
+
+      const bodies: string[] = [];
+      for (const id of ids.slice(-15)) {
+        const content = await this.couchSync.readFile(id);
+        if (!content) continue;
+        const bodyMatch = content.match(/^---\n[\s\S]*?\n---\n([\s\S]*)$/);
+        const body = bodyMatch?.[1]?.trim();
+        if (body) bodies.push(body);
+      }
+      if (bodies.length < 3) return;
+
+      const profile = await this.chat(
+        this.model,
+        buildVoiceProfilePrompt(),
+        bodies.map((b, i) => `Post ${i + 1}:\n"""${b}"""`).join('\n\n'),
+        0.3,
+        400,
+      );
+      if (!profile) return;
+
+      const today = new Date().toISOString().split('T')[0];
+      await this.couchSync.writeFile(
+        VOICE_PROFILE_ID,
+        `---\ntype: voice-profile\nupdated: ${today}\n---\n\n${profile}\n`,
+      );
+      this.logger.log('Voice profile refreshed');
+    } catch (err) {
+      this.logger.warn(`Voice profile refresh failed: ${(err as Error).message}`);
+    }
   }
 
   private async buildContext(docIds: string[]): Promise<string> {

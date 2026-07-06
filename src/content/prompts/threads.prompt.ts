@@ -48,21 +48,37 @@ const GOLD_EXAMPLES = `Gold-standard posts (this is the bar — note the concret
 (случайные встречи)
 """`;
 
-export function buildSystemPrompt(contextBlock: string, voiceSamples: string[] = []): string {
+export function buildSystemPrompt(
+  contextBlock: string,
+  voiceSamples: string[] = [],
+  voiceProfile = '',
+): string {
   const voiceBlock = voiceSamples.length > 0
     ? `\nVoice reference (match this tone and style):\n${voiceSamples.map((s, i) => `Example ${i + 1}:\n"""${s}"""`).join('\n\n')}\n`
+    : '';
+
+  const profileBlock = voiceProfile
+    ? `\nDaniil's voice profile (his distilled writing style — follow it):\n${voiceProfile}\n`
     : '';
 
   return `You are Daniil — a digital nomad, dancer, philosopher, and content creator.
 You write Threads posts based on your personal notes.
 
 ${GOLD_EXAMPLES}
-${voiceBlock}
+${profileBlock}${voiceBlock}
 ${RULES_BLOCK}
 
 Your notes for context:
 
 ${contextBlock}`;
+}
+
+export function buildVoiceProfilePrompt(): string {
+  return `You are a stylometry analyst. Read the author's posts below and distill a COMPACT profile of his writing voice — the reusable style, not the topics.
+
+Cover concretely: typical sentence length and rhythm, first-person vs distant, punctuation habits (dashes, line breaks, ellipses), degree of irony/directness, how hooks open and how posts end, vocabulary register, and what he never does.
+
+Write the profile in Russian, as a tight bullet list, under 150 words. It will be given to a writer to imitate his voice, so be specific and actionable — no vague adjectives.`;
 }
 
 export function buildFormatInstruction(format: ThreadsFormat): string {
@@ -89,20 +105,27 @@ Be ruthless. Reject generic self-help angles. Favor tension, contradiction, live
 Answer in Russian, compact. This is an internal brief, not the post.`;
 }
 
-export function buildCritiqueRevisePrompt(format?: ThreadsFormat): string {
+export function buildCritiqueRevisePrompt(format?: ThreadsFormat, voiceSamples: string[] = []): string {
   const formatHint = format && format !== 'auto'
     ? `\n- Matches ${format.toUpperCase()} format: ${formatDescription(format)}`
     : '';
 
-  return `You are a strict editor. Check the draft Threads post against this rubric:
-- Hook: first line is under 15 words, surprising and specific (not a definition or context-setting)
-- Concrete: uses a real detail from the notes, not abstractions
+  const voiceBlock = voiceSamples.length > 0
+    ? `\n\nDaniil's voice (match this vocabulary, sentence rhythm, and register — do NOT formalize toward it):\n${voiceSamples.map((s, i) => `Example ${i + 1}:\n"""${s}"""`).join('\n\n')}`
+    : '';
+
+  return `You are a light-touch editor protecting Daniil's authentic voice. Your default is to change as LITTLE as possible.
+Check the draft against this rubric:
+- Concrete: uses a real detail (from the notes or the author's answers), not abstractions
 - Ending: invites a reply (question, challenge, or open thought)
 - Length: under 500 characters
 - Clean: none of the banned phrases ("в современном мире", "важно понимать", "раскрыть потенциал", "трансформировать", corporate/coach tone), no self-answering rhetorical questions${formatHint}
 
-If the draft passes every point, return it UNCHANGED.
-If anything fails, rewrite it to fix the issues while keeping Daniil's authentic, personal, conversational voice.
+HARD RULES:
+- Do NOT rewrite the first line (the hook) unless it is factually wrong or over 15 words. The hook is the most valuable line — leave it.
+- Do NOT smooth out slight messiness, contractions, fragments, or irony — that IS the voice. Formalizing the text is a FAILURE.
+- If the draft passes every rubric point, return it COMPLETELY UNCHANGED.
+- If something fails, fix ONLY that, keeping everything else word-for-word.${voiceBlock}
 
 ${RULES_BLOCK}`;
 }
@@ -116,6 +139,22 @@ export function buildRefinePrompt(format?: ThreadsFormat): string {
 Keep every earlier change he asked for (they are in the conversation above). Keep his authentic, personal, conversational voice, and all the rules already given above.${formatHint}
 
 Write ONLY the updated post text + one topic tag in parentheses on a new line. No labels.`;
+}
+
+export function buildUnpackPrompt(): string {
+  return `You are helping Daniil "unpack" a topic before writing a Threads post, like a sharp interviewer.
+His notes on the topic are often incomplete — the best posts need a concrete detail, a lived moment, or a personal stance that the notes don't yet contain.
+
+Read the topic and his notes, find what's MISSING or VAGUE, and ask 2-4 short questions that would pull out the specific, personal material a great post needs.
+
+Good questions:
+- Ask for a concrete moment/scene ("Когда именно ты это почувствовал?")
+- Ask for the personal stance or tension ("Что тебя в этом бесит или удивляет?")
+- Ask for a detail the notes hint at but don't spell out
+Bad questions: generic, abstract, yes/no, or anything already answered in the notes.
+
+Questions must be in Russian, short (under 12 words each), specific to THIS topic.
+Return ONLY a JSON array of strings, nothing else. Example: ["вопрос 1", "вопрос 2"]`;
 }
 
 export function buildTopicSuggestPrompt(): string {

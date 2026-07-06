@@ -347,6 +347,25 @@ export class EmbeddingService implements OnModuleInit {
     }
   }
 
+  /**
+   * Rank arbitrary texts by cosine similarity to a query. Returns indices into
+   * `texts`, most similar first. Returns natural order [] on failure so callers
+   * can fall back. Used to pick the voice-samples closest to a post topic.
+   */
+  async rankTexts(query: string, texts: string[]): Promise<number[]> {
+    if (texts.length === 0 || !query.trim()) return [];
+    try {
+      const [queryVec, ...textVecs] = await this.embedBatch([query, ...texts]);
+      return texts
+        .map((_, i) => ({ i, score: textVecs[i] ? this.cosine(queryVec, textVecs[i]) : -1 }))
+        .sort((a, b) => b.score - a.score)
+        .map((r) => r.i);
+    } catch (err) {
+      this.logger.warn(`rankTexts failed: ${(err as Error).message}`);
+      return [];
+    }
+  }
+
   private async embed(text: string): Promise<number[]> {
     const response = await this.openai.embeddings.create({
       model: this.model,

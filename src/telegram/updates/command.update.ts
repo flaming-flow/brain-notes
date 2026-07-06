@@ -251,7 +251,7 @@ export class CommandUpdate {
   }
 
   async generateAndReply(ctx: BotContext, topic: string, format: ThreadsFormat = 'auto'): Promise<void> {
-    await ctx.reply('Generating...');
+    await ctx.reply('Looking at your notes...');
 
     const session = await this.contentAgent.startSession(topic);
     if (!session) {
@@ -259,27 +259,66 @@ export class CommandUpdate {
       return;
     }
 
-    const post = await this.contentAgent.generateFirst(
-      session.systemPrompt,
-      session.contextBlock,
-      topic,
-      format,
-    );
-
     ctx.session ??= {} as BotContext['session'];
     ctx.session.contentGen = {
       topic,
+      format,
       sources: session.sources,
       systemPrompt: session.systemPrompt,
-      messages: [
-        { role: 'user', content: `Topic: ${topic}` },
-        { role: 'assistant', content: post },
-      ],
-      currentPost: post,
-      format,
+      contextBlock: session.contextBlock,
+      voiceSamples: session.voiceSamples,
+      messages: [],
+      currentPost: '',
     };
 
-    await this.replyWithPost(ctx, post, session.sources);
+    // Unpacker: ask the author for specifics the notes lack, then generate.
+    const questions = await this.contentAgent.buildUnpackQuestions(topic, session.contextBlock);
+    if (questions.length === 0) {
+      await this.runGeneration(ctx);
+      return;
+    }
+
+    ctx.session.contentGen.unpackQuestions = questions;
+    ctx.session.contentGen.awaitingUnpackAnswers = true;
+
+    const qText = questions.map((q, i) => `${i + 1}. ${q}`).join('\n');
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('Skip → generate', 'gen_skip_unpack')],
+    ]);
+    await ctx.reply(
+      `Before I write — help me make it sharper:\n\n${qText}\n\nAnswer in one message (text or voice), or Skip.`,
+      keyboard,
+    );
+  }
+
+  /** Runs the actual generation using the paused session. `enrichment` = the
+   *  author's unpack answers (empty when skipped). */
+  async runGeneration(ctx: BotContext, enrichment = ''): Promise<void> {
+    const gen = ctx.session?.contentGen;
+    if (!gen) return;
+    gen.awaitingUnpackAnswers = false;
+
+    await ctx.reply('Generating...');
+
+    const post = await this.contentAgent.generateFirst(
+      gen.systemPrompt,
+      gen.contextBlock ?? '',
+      gen.topic,
+      gen.format as ThreadsFormat,
+      enrichment,
+      gen.voiceSamples ?? [],
+    );
+
+    gen.messages = [
+      {
+        role: 'user',
+        content: enrichment ? `Topic: ${gen.topic}\n\nAnswers:\n${enrichment}` : `Topic: ${gen.topic}`,
+      },
+      { role: 'assistant', content: post },
+    ];
+    gen.currentPost = post;
+
+    await this.replyWithPost(ctx, post, gen.sources);
   }
 
   replyWithPost(ctx: BotContext, post: string, sources: string[] = []): Promise<void> {

@@ -82,6 +82,11 @@ export interface ContentGeneration {
   currentPost: string; // last assistant message, used by Save actions
   format: string;
   awaitingRegenPrompt?: boolean;
+  // Unpacker: paused after retrieval, waiting for the author's answers before generating.
+  contextBlock?: string;
+  voiceSamples?: string[];
+  unpackQuestions?: string[];
+  awaitingUnpackAnswers?: boolean;
 }
 
 export interface SavedNoteRef {

@@ -79,7 +79,13 @@ export class TextUpdate {
     this.logger.log(`Received: "${text.slice(0, 50)}..."`);
 
     try {
-      // 0. Content regeneration with feedback
+      // 0. Unpacker answers before first generation
+      if (ctx.session?.contentGen?.awaitingUnpackAnswers) {
+        await this.commandUpdate.runGeneration(ctx, text);
+        return;
+      }
+
+      // 0b. Content regeneration with feedback
       if (ctx.session?.contentGen?.awaitingRegenPrompt) {
         await this.handleRegenFeedback(ctx, text);
         return;
