@@ -14,6 +14,15 @@ export default () => ({
       askModel: process.env.ASK_MODEL || 'gpt-5-mini',
       contentModel: process.env.CONTENT_MODEL || process.env.OPENAI_MODEL || 'gpt-4.1',
     },
+    // /ask tuning — all env-configurable (no code constants).
+    ask: {
+      reasoningEffort: process.env.ASK_REASONING_EFFORT || 'low', // minimal|low|medium|high (reasoning models only)
+      verify: process.env.ASK_VERIFY === 'true', // second fact-check pass; off by default (adds latency)
+      contextBudgetChars: parseInt(process.env.ASK_CONTEXT_BUDGET_CHARS || '200000', 10),
+      noteMaxChars: parseInt(process.env.ASK_NOTE_MAX_CHARS || '4000', 10),
+      sourceLimit: parseInt(process.env.ASK_SOURCE_LIMIT || '10', 10),
+      widePool: parseInt(process.env.ASK_WIDE_POOL || '500', 10),
+    },
     anthropic: {
       apiKey: process.env.ANTHROPIC_API_KEY || '',
       model: process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20241022',

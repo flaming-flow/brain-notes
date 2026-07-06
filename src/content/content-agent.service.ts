@@ -22,15 +22,11 @@ const VOICE_SAMPLE_COUNT = 5;
 const CONTEXT_NOTES_COUNT = 8;
 const CONTEXT_NOTE_MAX_CHARS = 800;
 
-// /ask feeds the WHOLE diary, ordered by relevance. Full-text notes fill this
-// char budget (~50K tokens, cheap on modern models); once the vault outgrows it,
-// the least-relevant tail degrades to one-line digests instead of being dropped —
-// so the agent still knows every note exists. Per-note cap stops one long note
-// from eating the budget.
-const ASK_CONTEXT_BUDGET_CHARS = 200_000;
-const ASK_NOTE_MAX_CHARS = 4_000;
+// /ask feeds the WHOLE diary, ordered by relevance. Full-text notes fill a char
+// budget; once the vault outgrows it, the least-relevant tail degrades to
+// one-line digests instead of being dropped — so the agent still knows every
+// note exists. Budget/caps/model/effort/verify are all env-tunable (see config).
 const ASK_NOTE_PREFIXES = ['inbox/', 'contacts/', 'projects/', 'books/'];
-const ASK_SOURCE_LIMIT = 10;
 
 const GROUNDED_ANSWER_PROMPT =
   'You are the author\'s personal knowledge assistant with access to their whole diary below.\n' +
@@ -58,6 +54,11 @@ export class ContentAgentService {
   private readonly model: string;
   private readonly askModel: string;
   private readonly contentModel: string;
+  private readonly askReasoningEffort: string;
+  private readonly askVerify: boolean;
+  private readonly askContextBudgetChars: number;
+  private readonly askNoteMaxChars: number;
+  private readonly askSourceLimit: number;
 
   constructor(
     private readonly config: ConfigService,
@@ -70,6 +71,11 @@ export class ContentAgentService {
     this.model = this.config.get<string>('ai.openai.model', 'gpt-4o-mini');
     this.askModel = this.config.get<string>('ai.openai.askModel', 'gpt-5-mini');
     this.contentModel = this.config.get<string>('ai.openai.contentModel', 'gpt-4.1-mini');
+    this.askReasoningEffort = this.config.get<string>('ai.ask.reasoningEffort', 'low');
+    this.askVerify = this.config.get<boolean>('ai.ask.verify', false);
+    this.askContextBudgetChars = this.config.get<number>('ai.ask.contextBudgetChars', 200000);
+    this.askNoteMaxChars = this.config.get<number>('ai.ask.noteMaxChars', 4000);
+    this.askSourceLimit = this.config.get<number>('ai.ask.sourceLimit', 10);
   }
 
   async ask(question: string): Promise<{ answer: string; sources: string[] }> {
@@ -101,8 +107,8 @@ export class ContentAgentService {
     for (const id of ordered) {
       const note = await this.loadNote(id);
       if (!note) continue;
-      if (used < ASK_CONTEXT_BUDGET_CHARS) {
-        const block = `### ${note.title}\n${note.body.slice(0, ASK_NOTE_MAX_CHARS)}`;
+      if (used < this.askContextBudgetChars) {
+        const block = `### ${note.title}\n${note.body.slice(0, this.askNoteMaxChars)}`;
         full.push(block);
         blockByTitle.set(note.title, block);
         used += block.length;
@@ -117,7 +123,7 @@ export class ContentAgentService {
       (digest.length
         ? `\n\n---\nOther notes in the diary (title + snippet; mention only if relevant):\n${digest.join('\n')}`
         : '');
-    const sourceIds = ranked.slice(0, ASK_SOURCE_LIMIT).map((r) => r.docId);
+    const sourceIds = ranked.slice(0, this.askSourceLimit).map((r) => r.docId);
 
     // Answer with the reasoning model over the whole diary.
     const t0 = Date.now();
@@ -127,15 +133,21 @@ export class ContentAgentService {
       `My notes:\n\n${context}\n\n---\n\nQuestion: ${question}`,
       0.1,
       1000,
+      this.askReasoningEffort,
     );
     const tDraft = Date.now();
     this.logger.log(
-      `ask timing: ctx=${context.length}ch draft(${this.askModel})=${tDraft - t0}ms`,
+      `ask timing: ctx=${context.length}ch draft(${this.askModel}, effort=${this.askReasoningEffort})=${tDraft - t0}ms`,
     );
 
-    // Light verification: fact-check only against the notes the draft actually
-    // cited, on a fast cheap model. If the draft cited nothing (e.g. a "not
-    // covered" refusal), there's nothing to check — skip the pass entirely.
+    // Optional verification (ASK_VERIFY): fact-check only against the notes the
+    // draft actually cited, on a fast cheap model. Off by default — grounding +
+    // the reasoning draft already guard against hallucination, and re-generating
+    // the full answer roughly doubles latency.
+    if (!this.askVerify) {
+      return { answer: draft || 'No answer generated.', sources: sourceIds };
+    }
+
     const citedBlocks = [...new Set(draft.match(/\[([^\]]+)\]/g)?.map((m) => m.slice(1, -1)) ?? [])]
       .map((title) => blockByTitle.get(title))
       .filter((b): b is string => Boolean(b));
@@ -342,6 +354,7 @@ export class ContentAgentService {
     user: string,
     temperature: number,
     maxTokens: number,
+    reasoningEffort?: string,
   ): Promise<string> {
     const messages = [
       { role: 'system' as const, content: system },
@@ -351,6 +364,7 @@ export class ContentAgentService {
     const params: Record<string, unknown> = { model, messages };
     if (ContentAgentService.isReasoningModel(model)) {
       params.max_completion_tokens = maxTokens + 2000;
+      if (reasoningEffort) params.reasoning_effort = reasoningEffort;
     } else {
       params.max_tokens = maxTokens;
       params.temperature = temperature;

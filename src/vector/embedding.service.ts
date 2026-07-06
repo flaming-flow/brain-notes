@@ -9,9 +9,6 @@ const NOTE_PREFIXES = ['inbox/', 'contacts/', 'projects/'];
 const FEED_TIMEOUT_MS = 60000;
 const FEED_BACKOFF_MS = 5000;
 const RERANK_POOL = 30;
-// Wide pool for whole-corpus ranking (/ask). Covers the entire vault at current
-// scale; when notes grow past this, the lowest-scoring tail simply isn't ranked.
-const WIDE_POOL = 500;
 
 // Target chunk size (~350 tokens). Notes are split into passages so retrieval
 // matches the relevant part instead of a diluted whole-note embedding, and the
@@ -89,6 +86,7 @@ export class EmbeddingService implements OnModuleInit {
   private readonly openai: OpenAI;
   private readonly model = 'text-embedding-3-small';
   private readonly rerankModel: string;
+  private readonly widePool: number;
   private readonly tagVectorCache = new Map<string, number[]>();
 
   static readonly TAG_SIM_THRESHOLD = TAG_SIM_THRESHOLD;
@@ -103,6 +101,7 @@ export class EmbeddingService implements OnModuleInit {
       apiKey: this.config.getOrThrow<string>('ai.openai.apiKey'),
     });
     this.rerankModel = this.config.get<string>('ai.openai.model', 'gpt-4o-mini');
+    this.widePool = this.config.get<number>('ai.ask.widePool', 500);
   }
 
   onModuleInit(): void {
@@ -286,7 +285,7 @@ export class EmbeddingService implements OnModuleInit {
    * embedding + a wide Qdrant search) so ranking the whole vault stays cheap.
    */
   async rankAllNotes(query: string): Promise<Array<{ docId: string; score: number }>> {
-    const hits = await this.searchSimilar(query, WIDE_POOL);
+    const hits = await this.searchSimilar(query, this.widePool);
     const best = new Map<string, number>();
     for (const h of hits) {
       const cur = best.get(h.docId);
