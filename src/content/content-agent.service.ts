@@ -96,6 +96,7 @@ export class ContentAgentService {
 
     const full: string[] = [];
     const digest: string[] = [];
+    const blockByTitle = new Map<string, string>(); // for the cited-only verify pass
     let used = 0;
     for (const id of ordered) {
       const note = await this.loadNote(id);
@@ -103,6 +104,7 @@ export class ContentAgentService {
       if (used < ASK_CONTEXT_BUDGET_CHARS) {
         const block = `### ${note.title}\n${note.body.slice(0, ASK_NOTE_MAX_CHARS)}`;
         full.push(block);
+        blockByTitle.set(note.title, block);
         used += block.length;
       } else {
         const snippet = note.body.replace(/\s+/g, ' ').trim().slice(0, 120);
@@ -117,6 +119,7 @@ export class ContentAgentService {
         : '');
     const sourceIds = ranked.slice(0, ASK_SOURCE_LIMIT).map((r) => r.docId);
 
+    // Answer with the reasoning model over the whole diary.
     const draft = await this.chat(
       this.askModel,
       GROUNDED_ANSWER_PROMPT,
@@ -125,11 +128,21 @@ export class ContentAgentService {
       1000,
     );
 
-    // Verification pass: strip any claim the notes don't support.
+    // Light verification: fact-check only against the notes the draft actually
+    // cited, on a fast cheap model. If the draft cited nothing (e.g. a "not
+    // covered" refusal), there's nothing to check — skip the pass entirely.
+    const citedBlocks = [...new Set(draft.match(/\[([^\]]+)\]/g)?.map((m) => m.slice(1, -1)) ?? [])]
+      .map((title) => blockByTitle.get(title))
+      .filter((b): b is string => Boolean(b));
+
+    if (citedBlocks.length === 0) {
+      return { answer: draft || 'No answer generated.', sources: sourceIds };
+    }
+
     const verified = await this.chat(
-      this.askModel,
+      this.model,
       VERIFY_ANSWER_PROMPT,
-      `Notes:\n\n${context}\n\n---\n\nQuestion: ${question}\n\nDraft answer:\n${draft}`,
+      `Notes:\n\n${citedBlocks.join('\n\n')}\n\n---\n\nQuestion: ${question}\n\nDraft answer:\n${draft}`,
       0,
       1000,
     );
