@@ -120,12 +120,17 @@ export class ContentAgentService {
     const sourceIds = ranked.slice(0, ASK_SOURCE_LIMIT).map((r) => r.docId);
 
     // Answer with the reasoning model over the whole diary.
+    const t0 = Date.now();
     const draft = await this.chat(
       this.askModel,
       GROUNDED_ANSWER_PROMPT,
       `My notes:\n\n${context}\n\n---\n\nQuestion: ${question}`,
       0.1,
       1000,
+    );
+    const tDraft = Date.now();
+    this.logger.log(
+      `ask timing: ctx=${context.length}ch draft(${this.askModel})=${tDraft - t0}ms`,
     );
 
     // Light verification: fact-check only against the notes the draft actually
@@ -145,6 +150,9 @@ export class ContentAgentService {
       `Notes:\n\n${citedBlocks.join('\n\n')}\n\n---\n\nQuestion: ${question}\n\nDraft answer:\n${draft}`,
       0,
       1000,
+    );
+    this.logger.log(
+      `ask timing: verify(${this.model}, ${citedBlocks.length} notes)=${Date.now() - tDraft}ms`,
     );
 
     return {
