@@ -10,8 +10,47 @@ const FEED_TIMEOUT_MS = 60000;
 const FEED_BACKOFF_MS = 5000;
 const RERANK_POOL = 30;
 
+// Target chunk size (~350 tokens). Notes are split into passages so retrieval
+// matches the relevant part instead of a diluted whole-note embedding, and the
+// answer sees the exact passage rather than an arbitrary prefix.
+const CHUNK_CHARS = 1400;
+
 function isNoteId(id: string): boolean {
   return id.endsWith('.md') && NOTE_PREFIXES.some((p) => id.startsWith(p));
+}
+
+/**
+ * Split note body into passages near CHUNK_CHARS, packing whole paragraphs and
+ * hard-splitting any paragraph longer than the target. Returns [body] when the
+ * note fits in a single chunk (contacts, short notes).
+ */
+function chunkText(body: string): string[] {
+  if (body.length <= CHUNK_CHARS) return [body];
+
+  const paragraphs = body.split(/\n{2,}/);
+  const chunks: string[] = [];
+  let current = '';
+
+  const flush = (): void => {
+    const trimmed = current.trim();
+    if (trimmed) chunks.push(trimmed);
+    current = '';
+  };
+
+  for (const para of paragraphs) {
+    if (para.length > CHUNK_CHARS) {
+      flush();
+      for (let i = 0; i < para.length; i += CHUNK_CHARS) {
+        chunks.push(para.slice(i, i + CHUNK_CHARS).trim());
+      }
+      continue;
+    }
+    if (current.length + para.length + 2 > CHUNK_CHARS) flush();
+    current += (current ? '\n\n' : '') + para;
+  }
+  flush();
+
+  return chunks.length > 0 ? chunks : [body];
 }
 
 /** Stable 32-bit FNV-1a hash — maps a token to a Qdrant sparse-vector index. */
@@ -132,23 +171,35 @@ export class EmbeddingService implements OnModuleInit {
       const contentHash = createHash('sha256').update(body).digest('hex');
       if ((await this.qdrant.getContentHash(docId)) === contentHash) return;
 
-      const vector = await this.embed(body);
-      const sparse = buildSparse(body);
-
-      // Extract metadata from frontmatter
+      // Extract metadata from frontmatter (shared across all chunks).
       const typeMatch = content.match(/^type:\s*(.+)$/m);
       const areaMatch = content.match(/^life_area:\s*(.+)$/m);
       const tagsMatch = content.match(/^tags:\s*\[(.+)\]$/m);
-
-      await this.qdrant.upsert(docId, vector, sparse, {
+      const meta = {
         type: typeMatch?.[1]?.trim() || 'note',
         life_area: areaMatch?.[1]?.trim() || '',
         tags: tagsMatch?.[1]?.trim() || '',
-        preview: body.slice(0, 200),
         content_hash: contentHash,
-      });
+      };
 
-      this.logger.log(`Indexed: ${docId}`);
+      // Chunk count may shrink on edit; clear old chunks before re-upserting.
+      await this.qdrant.delete(docId);
+
+      const chunks = chunkText(body);
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        const vector = await this.embed(chunk);
+        const sparse = buildSparse(chunk);
+        await this.qdrant.upsert(`${docId}#${i}`, vector, sparse, {
+          ...meta,
+          doc_id: docId,
+          chunk_index: i,
+          text: chunk,
+          preview: chunk.slice(0, 200),
+        });
+      }
+
+      this.logger.log(`Indexed: ${docId} (${chunks.length} chunk${chunks.length > 1 ? 's' : ''})`);
     } catch (err) {
       this.logger.warn(`Index failed for ${docId}: ${(err as Error).message}`);
     }
@@ -170,7 +221,7 @@ export class EmbeddingService implements OnModuleInit {
     return results.map((r) => ({
       docId: r.id,
       score: r.score,
-      preview: (r.payload.preview as string) || '',
+      preview: (r.payload.text as string) || (r.payload.preview as string) || '',
     }));
   }
 
@@ -187,7 +238,7 @@ export class EmbeddingService implements OnModuleInit {
 
     try {
       const list = candidates
-        .map((c, i) => `[${i}] ${c.docId.replace(/^[^/]+\//, '').replace('.md', '')}: ${c.preview}`)
+        .map((c, i) => `[${i}] ${c.docId.replace(/^[^/]+\//, '').replace('.md', '')}: ${c.preview.slice(0, 200)}`)
         .join('\n');
 
       const response = await this.openai.chat.completions.create({

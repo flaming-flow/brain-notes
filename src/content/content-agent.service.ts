@@ -18,6 +18,22 @@ const VOICE_SAMPLES_PREFIX = 'voice-samples/';
 const CONTEXT_NOTES_COUNT = 8;
 const CONTEXT_NOTE_MAX_CHARS = 800;
 
+const GROUNDED_ANSWER_PROMPT =
+  'You are a personal knowledge assistant. Answer STRICTLY from the notes provided below.\n' +
+  'Rules:\n' +
+  '- Use ONLY facts present in the notes. Never invent names, dates, numbers, or claims.\n' +
+  '- After each statement, cite its source note title in square brackets, e.g. [note-title].\n' +
+  "- If the notes don't contain the answer, say so plainly and don't guess.\n" +
+  "- Preserve the author's tone: if a note is ironic or sarcastic, don't read it literally.\n" +
+  '- Answer in the same language as the question. Be concise.';
+
+const VERIFY_ANSWER_PROMPT =
+  'You are a strict fact-checker. You are given the source notes, a question, and a draft answer.\n' +
+  'Remove or correct any statement in the draft that is not directly supported by the notes.\n' +
+  'Keep the [note-title] citations. Keep the same language as the draft.\n' +
+  "If nothing in the notes supports an answer, say the notes don't cover it.\n" +
+  'Output ONLY the corrected answer, nothing else.';
+
 @Injectable()
 export class ContentAgentService {
   private readonly logger = new Logger(ContentAgentService.name);
@@ -44,30 +60,31 @@ export class ContentAgentService {
       return { answer: 'No relevant notes found.', sources: [] };
     }
 
-    const sourceIds = results.map((r) => r.docId);
-    const context = await this.buildContext(sourceIds);
+    // Ground on the exact retrieved passages, titled by their note.
+    const context = results
+      .map((r) => `### ${r.docId.replace('.md', '').replace(/^[^/]+\//, '')}\n${r.preview}`)
+      .join('\n\n');
+    const sourceIds = [...new Set(results.map((r) => r.docId))];
 
-    const response = await this.openai.chat.completions.create({
-      model: this.model,
-      messages: [
-        {
-          role: 'system',
-          content:
-            'You are a personal knowledge assistant. Answer the question based on the user\'s notes provided below. ' +
-            'Be concise and reference specific notes when relevant. ' +
-            'Answer in the same language as the question.',
-        },
-        {
-          role: 'user',
-          content: `My notes:\n\n${context}\n\n---\n\nQuestion: ${question}`,
-        },
-      ],
-      max_tokens: 1000,
-      temperature: 0.5,
-    });
+    const draft = await this.chat(
+      this.model,
+      GROUNDED_ANSWER_PROMPT,
+      `My notes:\n\n${context}\n\n---\n\nQuestion: ${question}`,
+      0.1,
+      1000,
+    );
+
+    // Verification pass: strip any claim the notes don't support.
+    const verified = await this.chat(
+      this.model,
+      VERIFY_ANSWER_PROMPT,
+      `Notes:\n\n${context}\n\n---\n\nQuestion: ${question}\n\nDraft answer:\n${draft}`,
+      0,
+      1000,
+    );
 
     return {
-      answer: response.choices[0]?.message?.content?.trim() || 'No answer generated.',
+      answer: verified || draft || 'No answer generated.',
       sources: sourceIds,
     };
   }
@@ -131,7 +148,7 @@ export class ContentAgentService {
       this.loadVoiceSamples(),
     ]);
 
-    const sourceIds = results.map((r) => r.docId);
+    const sourceIds = [...new Set(results.map((r) => r.docId))];
     const contextBlock = sourceIds.length > 0 ? await this.buildContext(sourceIds) : '';
     if (!contextBlock) return null;
 

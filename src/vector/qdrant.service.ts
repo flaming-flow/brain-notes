@@ -73,14 +73,19 @@ export class QdrantService implements OnModuleInit {
     this.logger.log(`Qdrant collection "${this.collection}" created (hybrid)`);
   }
 
+  /**
+   * Upsert one chunk. `pointKey` is the unique point identity (e.g.
+   * `notes/foo.md#2`); `payload.doc_id` carries the owning note so all chunks
+   * of a note can be found/deleted together.
+   */
   async upsert(
-    id: string,
+    pointKey: string,
     dense: number[],
     sparse: SparseVector,
     payload: Record<string, unknown>,
   ): Promise<void> {
-    // Qdrant needs numeric or UUID ids, use hash of string id
-    const numericId = this.hashId(id);
+    // Qdrant needs numeric or UUID ids, use hash of the point key.
+    const numericId = this.hashId(pointKey);
 
     const res = await fetch(`${this.baseUrl}/collections/${this.collection}/points`, {
       method: 'PUT',
@@ -90,7 +95,7 @@ export class QdrantService implements OnModuleInit {
           {
             id: numericId,
             vector: { dense, text: { indices: sparse.indices, values: sparse.values } },
-            payload: { ...payload, doc_id: id },
+            payload,
           },
         ],
       }),
@@ -144,37 +149,50 @@ export class QdrantService implements OnModuleInit {
     }));
   }
 
-  async delete(id: string): Promise<void> {
-    const numericId = this.hashId(id);
+  /** Delete every chunk belonging to a note, matched by doc_id payload. */
+  async delete(docId: string): Promise<void> {
     await fetch(`${this.baseUrl}/collections/${this.collection}/points/delete`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ points: [numericId] }),
+      body: JSON.stringify({
+        filter: { must: [{ key: 'doc_id', match: { value: docId } }] },
+      }),
     });
   }
 
-  /** Existing content hash for a doc, or null if the point isn't indexed. */
+  /**
+   * Content hash stored on a note's chunks, or null if not indexed. All chunks
+   * of a note share the same whole-note hash, so reading any one suffices.
+   */
   async getContentHash(docId: string): Promise<string | null> {
-    const numericId = this.hashId(docId);
-    const res = await fetch(`${this.baseUrl}/collections/${this.collection}/points`, {
+    const res = await fetch(`${this.baseUrl}/collections/${this.collection}/points/scroll`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids: [numericId], with_payload: true }),
+      body: JSON.stringify({
+        filter: { must: [{ key: 'doc_id', match: { value: docId } }] },
+        limit: 1,
+        with_payload: true,
+        with_vector: false,
+      }),
     });
     if (!res.ok) return null;
 
     const data = (await res.json()) as {
-      result?: Array<{ payload?: Record<string, unknown> }>;
+      result?: { points?: Array<{ payload?: Record<string, unknown> }> };
     };
-    const payload = data.result?.[0]?.payload;
-    // Guard against hash-id collisions: only trust the hash if doc_id matches.
-    if (payload?.doc_id !== docId) return null;
-    return (payload?.content_hash as string) ?? null;
+    const payload = data.result?.points?.[0]?.payload;
+    // Legacy points (pre-chunking) lack chunk_index — treat as unindexed so
+    // /reindex re-chunks them instead of skipping on a matching hash.
+    if (payload == null || typeof payload.chunk_index !== 'number') return null;
+    return (payload.content_hash as string) ?? null;
   }
 
-  /** All indexed points as { docId, contentHash }, paged via scroll. */
+  /**
+   * All indexed notes as { docId, contentHash }, deduped across chunks and
+   * paged via scroll. Used to reconcile deletions against CouchDB.
+   */
   async scrollDocs(): Promise<Array<{ docId: string; contentHash: string | null }>> {
-    const out: Array<{ docId: string; contentHash: string | null }> = [];
+    const byDoc = new Map<string, string | null>();
     let offset: unknown = undefined;
 
     for (;;) {
@@ -194,14 +212,16 @@ export class QdrantService implements OnModuleInit {
 
       for (const pt of data.result?.points ?? []) {
         const docId = pt.payload?.doc_id as string | undefined;
-        if (docId) out.push({ docId, contentHash: (pt.payload?.content_hash as string) ?? null });
+        if (docId && !byDoc.has(docId)) {
+          byDoc.set(docId, (pt.payload?.content_hash as string) ?? null);
+        }
       }
 
       offset = data.result?.next_page_offset;
       if (!offset) break;
     }
 
-    return out;
+    return [...byDoc].map(([docId, contentHash]) => ({ docId, contentHash }));
   }
 
   private hashId(id: string): number {
