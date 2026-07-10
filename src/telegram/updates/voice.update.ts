@@ -6,6 +6,9 @@ import { VoiceService } from '../services/voice.service.js';
 import { MessageProcessorService } from '../services/message-processor.service.js';
 import { VaultWriterService } from '../../vault/vault-writer.service.js';
 import { CouchDBSyncService } from '../../couchdb/couchdb-sync.service.js';
+import { CommandUpdate } from './command.update.js';
+import { ContentAgentService } from '../../content/content-agent.service.js';
+import type { ThreadsFormat } from '../../content/prompts/threads.prompt.js';
 import { parseVoiceCommand } from '../utils/voice-command.util.js';
 import type { BotContext } from '../../shared/interfaces/session.interface.js';
 import { format } from 'date-fns';
@@ -20,6 +23,8 @@ export class VoiceUpdate {
     private readonly processor: MessageProcessorService,
     private readonly writer: VaultWriterService,
     private readonly couchSync: CouchDBSyncService,
+    private readonly commandUpdate: CommandUpdate,
+    private readonly contentAgent: ContentAgentService,
   ) {}
 
   @On('voice')
@@ -77,6 +82,29 @@ export class VoiceUpdate {
         },
         async (error) => {
           await ctx.telegram.sendMessage(chatId, `Voice error: ${(error as Error).message}`);
+        },
+      );
+      return;
+    }
+
+    // Content generation: voice answers to unpack questions or regen feedback
+    // must feed the generator, not the note pipeline.
+    const gen = ctx.session?.contentGen;
+    if (gen?.awaitingUnpackAnswers || gen?.awaitingRegenPrompt) {
+      const forRegen = !!gen.awaitingRegenPrompt;
+      await ctx.reply('Got it, processing...');
+      const genFileLink = await ctx.telegram.getFileLink(voiceData.file_id);
+      this.voice.transcribe(genFileLink.href).then(
+        async (rawText) => {
+          const answer = rawText.trim();
+          if (forRegen) {
+            await this.handleRegenViaVoice(ctx, answer);
+          } else {
+            await this.commandUpdate.runGeneration(ctx, answer);
+          }
+        },
+        async (error) => {
+          await ctx.telegram.sendMessage(chatId, `Voice error: ${error instanceof Error ? error.message : 'unknown'}`);
         },
       );
       return;
@@ -171,6 +199,34 @@ export class VoiceUpdate {
     if (mimeType?.includes('wav')) return '.wav';
     if (mimeType?.includes('m4a') || mimeType?.includes('mp4')) return '.m4a';
     return '.mp3';
+  }
+
+  private async handleRegenViaVoice(ctx: BotContext, text: string): Promise<void> {
+    const gen = ctx.session?.contentGen;
+    if (!gen) return;
+    gen.awaitingRegenPrompt = false;
+
+    await ctx.reply('Regenerating...');
+
+    const instruction = text.toLowerCase() === 'ok'
+      ? 'Write a fresh variant of the current post — same meaning and topic, different wording and angle.'
+      : text;
+
+    gen.messages.push({ role: 'user', content: instruction });
+
+    const post = await this.contentAgent.refine(
+      gen.systemPrompt,
+      gen.messages,
+      gen.format as ThreadsFormat,
+    );
+    if (!post) {
+      await ctx.reply('Failed to regenerate. Try again.');
+      return;
+    }
+
+    gen.messages.push({ role: 'assistant', content: post });
+    gen.currentPost = post;
+    await this.commandUpdate.replyWithPost(ctx, post, gen.sources);
   }
 
   private async showTranscriptionPreview(ctx: BotContext, rawText: string, voiceFileId?: string): Promise<void> {
