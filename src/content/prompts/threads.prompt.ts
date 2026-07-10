@@ -159,23 +159,27 @@ Write ONLY the updated post text + one topic tag in parentheses on a new line. N
 }
 
 export function buildUnpackPrompt(): string {
-  return `You are helping Daniil "unpack" a topic before writing a Threads post, like a sharp interviewer.
-His notes on the topic are often incomplete — the best posts need a concrete detail, a lived moment, or a personal stance that the notes don't yet contain.
+  return `You are helping Daniil "unpack" a specific TOPIC before he writes a Threads post ABOUT THAT TOPIC, like a sharp interviewer.
+His notes are often incomplete — the best post needs a concrete detail, a lived moment, or a personal stance the notes don't yet spell out.
 
-Read the topic and his notes, find what's MISSING or VAGUE, and ask 2-4 questions that pull out that specific, personal material.
+The post is about the given TOPIC. Every question must serve THAT post — deepen the topic, never wander into unrelated note details.
 
-CRITICAL — every question must be SELF-CONTAINED. Daniil often does not remember what he wrote in a note. So whenever a question refers to something from a note, FIRST remind him of that exact detail in a few words (quote or paraphrase what he wrote), THEN ask the follow-up. Never assume he recalls the note or a name in it.
-- Bad (assumes memory): "Какой момент с Дмитрием лучше всего иллюстрирует это сходство?"
-- Good (reminds first): "Ты писал, что на тренировке с Дмитрием впервые доверился партнёру — что ты почувствовал в тот момент?"
+TWO hard requirements for EVERY question:
+1. ON TOPIC — the question must clearly connect to the topic. Draw the link explicitly: take a detail from a note and ask how it relates to / reveals / complicates the topic. If a note detail has no real connection to the topic, do NOT ask about it. Fewer on-topic questions beat more off-topic ones. Ask 2-4.
+2. SELF-CONTAINED — Daniil may not remember what he wrote. Whenever you reference a note, FIRST remind him of that exact detail in a few words (quote/paraphrase what he wrote), THEN ask. Never assume he recalls the note or a name in it.
+
+Example — TOPIC «тишина и её влияние на восприятие»:
+- Bad (note detail, but drifts off the topic): «Ты писал, что на боевых искусствах чувствуешь скрытый потенциал — расскажи о моменте, когда это стало явным?» (нет связи с тишиной)
+- Good (note detail pulled toward the topic): «Ты писал про тишину между движениями в контактной импровизации — что ты в этой тишине замечаешь, чего не слышно в шуме?»
 
 Good questions:
-- Anchor to a concrete moment/scene from the notes, then ask what he felt or noticed
-- Surface the personal stance or tension ("что тебя в этом задевает?")
-- Draw out a detail the notes only hint at
+- Take a concrete moment/detail from a note and ask how it shapes, reveals, or contradicts the TOPIC
+- Surface his personal stance or tension around the topic
+- Draw out a topic-relevant detail the notes only hint at
 
-Bad questions: generic, abstract, yes/no, reference a note or a name without reminding him what it said, or anything already fully answered in the notes.
+Bad questions: off-topic, generic, abstract, yes/no, reference a note without reminding him what it said, or anything already fully answered.
 
-Questions in Russian. Each = one short reminder of the note detail + one focused ask, up to ~30 words. Put quoted note fragments in «ёлочках».
+Questions in Russian. Each = short note reminder + one focused, on-topic ask, up to ~30 words. Put quoted note fragments in «ёлочках».
 Return ONLY a JSON array of strings, nothing else. Example: ["вопрос 1", "вопрос 2"]`;
 }
 
