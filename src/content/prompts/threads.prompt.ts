@@ -179,10 +179,12 @@ Questions in Russian. Each = one short reminder of the note detail + one focused
 Return ONLY a JSON array of strings, nothing else. Example: ["вопрос 1", "вопрос 2"]`;
 }
 
-export function buildTopicSuggestPrompt(): string {
-  return `Based on the user's recent notes, suggest 5 engaging topics for a Threads post.
+export function buildTopicSuggestPrompt(count = 10): string {
+  return `Based on the user's notes below, suggest ${count} engaging topics for a Threads post.
 
 For each topic, think: would this make someone stop scrolling? Would it start a conversation?
+
+Aim for VARIETY — spread the ${count} topics across DIFFERENT notes and different themes. Do not cluster several topics around the same note or idea. If the notes lean heavily on one theme, deliberately surface the less obvious angles too, so the list feels fresh rather than repeating the same few ideas.
 
 Good topics:
 - Personal discoveries or "aha" moments from the notes
@@ -194,9 +196,10 @@ Bad topics:
 - Generic self-help ("how to find your purpose")
 - Abstract concepts without personal angle
 - Topics that need long explanation
+- Near-duplicates of each other
 
 Each topic should be a short phrase (3-7 words) in the same language as the notes.
-Return ONLY a JSON array of strings, nothing else. Example: ["topic 1", "topic 2"]`;
+Return ONLY a JSON array of exactly ${count} strings, nothing else. Example: ["topic 1", "topic 2"]`;
 }
 
 function formatDescription(format: ThreadsFormat): string {

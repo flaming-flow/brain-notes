@@ -23,6 +23,11 @@ export default () => ({
       sourceLimit: parseInt(process.env.ASK_SOURCE_LIMIT || '10', 10),
       widePool: parseInt(process.env.ASK_WIDE_POOL || '500', 10),
     },
+    // Content generation tuning — all env-configurable.
+    content: {
+      topicCount: parseInt(process.env.CONTENT_TOPIC_COUNT || '10', 10), // how many topics /generate suggests
+      topicSampleSize: parseInt(process.env.CONTENT_TOPIC_SAMPLE || '25', 10), // notes randomly sampled per call (variety, not repetition)
+    },
     anthropic: {
       apiKey: process.env.ANTHROPIC_API_KEY || '',
       model: process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20241022',

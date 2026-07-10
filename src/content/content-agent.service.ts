@@ -59,6 +59,8 @@ export class ContentAgentService {
   private readonly askContextBudgetChars: number;
   private readonly askNoteMaxChars: number;
   private readonly askSourceLimit: number;
+  private readonly topicCount: number;
+  private readonly topicSampleSize: number;
 
   constructor(
     private readonly config: ConfigService,
@@ -76,6 +78,8 @@ export class ContentAgentService {
     this.askContextBudgetChars = this.config.get<number>('ai.ask.contextBudgetChars', 200000);
     this.askNoteMaxChars = this.config.get<number>('ai.ask.noteMaxChars', 4000);
     this.askSourceLimit = this.config.get<number>('ai.ask.sourceLimit', 10);
+    this.topicCount = this.config.get<number>('ai.content.topicCount', 10);
+    this.topicSampleSize = this.config.get<number>('ai.content.topicSampleSize', 25);
   }
 
   async ask(question: string): Promise<{ answer: string; sources: string[] }> {
@@ -182,9 +186,12 @@ export class ContentAgentService {
 
     this.logger.log(`Found ${allIds.length} notes for topic suggestions`);
 
-    const context = await this.buildContext(allIds.slice(-30));
+    // Shuffle then take a random sample each call, so different notes surface
+    // and /generate doesn't keep proposing the same few topics.
+    const sampled = this.shuffle(allIds).slice(0, this.topicSampleSize);
+    const context = await this.buildContext(sampled);
 
-    this.logger.log(`Built context: ${context.length} chars`);
+    this.logger.log(`Built context: ${context.length} chars from ${sampled.length}/${allIds.length} notes`);
 
     if (!context) return [];
 
@@ -193,15 +200,15 @@ export class ContentAgentService {
       messages: [
         {
           role: 'system',
-          content: buildTopicSuggestPrompt(),
+          content: buildTopicSuggestPrompt(this.topicCount),
         },
         {
           role: 'user',
           content: context,
         },
       ],
-      max_tokens: 300,
-      temperature: 0.8,
+      max_tokens: 600,
+      temperature: 0.9,
     });
 
     try {
@@ -209,13 +216,25 @@ export class ContentAgentService {
       this.logger.log(`AI topics response: ${raw.slice(0, 200)}`);
       const match = raw.match(/\[[\s\S]*\]/);
       if (match) {
-        return JSON.parse(match[0]) as string[];
+        const topics = JSON.parse(match[0]) as string[];
+        return topics
+          .filter((t) => typeof t === 'string' && t.trim())
+          .slice(0, this.topicCount);
       }
       return [];
     } catch (err) {
       this.logger.warn(`Failed to parse topics: ${(err as Error).message}`);
       return [];
     }
+  }
+
+  private shuffle<T>(arr: T[]): T[] {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
   }
 
   /**
