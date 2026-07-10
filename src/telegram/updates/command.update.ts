@@ -322,8 +322,13 @@ export class CommandUpdate {
   }
 
   replyWithPost(ctx: BotContext, post: string, sources: string[] = []): Promise<void> {
+    const esc = (s: string) =>
+      s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    // Post text wrapped in <pre> so Telegram renders a tap-to-copy block
+    // containing ONLY the post; sources stay outside it as plain text.
     const sourcesText = sources.length > 0
-      ? `\n\n---\nBased on: ${sources.map((s) => `"${s}"`).join(', ')}`
+      ? `\n\nBased on: ${sources.map((s) => `"${esc(s)}"`).join(', ')}`
       : '';
 
     const formatButtons = Object.entries(THREADS_FORMATS).map(
@@ -342,7 +347,10 @@ export class CommandUpdate {
       ],
     ]);
 
-    return ctx.reply(post + sourcesText, keyboard) as unknown as Promise<void>;
+    return ctx.reply(`<pre>${esc(post)}</pre>${sourcesText}`, {
+      parse_mode: 'HTML',
+      reply_markup: keyboard.reply_markup,
+    }) as unknown as Promise<void>;
   }
 
   @Command('reindex')
