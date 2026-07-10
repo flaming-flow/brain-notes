@@ -90,14 +90,17 @@ export class VoiceUpdate {
     // Content generation: voice answers to unpack questions or regen feedback
     // must feed the generator, not the note pipeline.
     const gen = ctx.session?.contentGen;
-    if (gen?.awaitingUnpackAnswers || gen?.awaitingRegenPrompt) {
+    if (gen?.awaitingUnpackAnswers || gen?.awaitingRegenPrompt || gen?.awaitingEditText) {
       const forRegen = !!gen.awaitingRegenPrompt;
+      const forEdit = !!gen.awaitingEditText;
       await ctx.reply('Got it, processing...');
       const genFileLink = await ctx.telegram.getFileLink(voiceData.file_id);
       this.voice.transcribe(genFileLink.href).then(
         async (rawText) => {
           const answer = rawText.trim();
-          if (forRegen) {
+          if (forEdit) {
+            await this.handleEditViaVoice(ctx, answer);
+          } else if (forRegen) {
             await this.handleRegenViaVoice(ctx, answer);
           } else {
             await this.commandUpdate.runGeneration(ctx, answer);
@@ -227,6 +230,29 @@ export class VoiceUpdate {
     gen.messages.push({ role: 'assistant', content: post });
     gen.currentPost = post;
     await this.commandUpdate.replyWithPost(ctx, post, gen.sources);
+  }
+
+  private async handleEditViaVoice(ctx: BotContext, text: string): Promise<void> {
+    const gen = ctx.session?.contentGen;
+    if (!gen) return;
+    gen.awaitingEditText = false;
+
+    const edited = text.trim();
+    if (!edited) {
+      await ctx.reply('Empty edit, ignored.');
+      return;
+    }
+
+    gen.messages.push({
+      role: 'user',
+      content: 'I rewrote the post myself. Use this exact version going forward.',
+    });
+    gen.messages.push({ role: 'assistant', content: edited });
+    gen.currentPost = edited;
+
+    await this.contentAgent.saveVoiceSample(edited);
+    await ctx.reply('Saved your version as a voice example.');
+    await this.commandUpdate.replyWithPost(ctx, edited, gen.sources);
   }
 
   private async showTranscriptionPreview(ctx: BotContext, rawText: string, voiceFileId?: string): Promise<void> {

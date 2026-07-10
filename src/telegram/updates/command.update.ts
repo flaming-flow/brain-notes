@@ -338,13 +338,14 @@ export class CommandUpdate {
     const keyboard = Markup.inlineKeyboard([
       [
         Markup.button.callback('Regenerate', 'regen_threads'),
-        Markup.button.callback('Save as draft', 'save_draft'),
+        Markup.button.callback('Edit', 'gen_edit'),
       ],
       formatButtons,
       [
+        Markup.button.callback('Save as draft', 'save_draft'),
         Markup.button.callback('Save as example', 'save_example'),
-        Markup.button.callback('Cancel', 'gen_cancel'),
       ],
+      [Markup.button.callback('Cancel', 'gen_cancel')],
     ]);
 
     return ctx.reply(`<pre>${esc(post)}</pre>${sourcesText}`, {

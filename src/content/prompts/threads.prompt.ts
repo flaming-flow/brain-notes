@@ -18,6 +18,8 @@ const RULES_BLOCK = `RULES:
     · specific number/timeframe ("Три года учил танцу и только вчера понял чему")
     · direct challenge / contrarian take (state a sharp opinion, invite disagreement)
     · confession ("Я почти бросил танцевать в прошлом месяце")
+    · mistake warning (name an error you made or see others make: "Я годами делал это неправильно и не замечал")
+    · open question (a real question you're wrestling with, not rhetorical: "Почему тишина пугает сильнее шума?")
 - Anchor emotion to a CONCRETE sensory or place detail, not generic feeling words. "Руки тряслись" and "в 4 утра в аэропорту" beat "мне было тревожно"
 - End with an open loop, a genuine question, or a takeable position — never a closed, finished argument with nothing to add
 - Conversational, like texting a smart friend. Short sentences. Line breaks between thoughts
@@ -120,7 +122,7 @@ export function buildPlanPrompt(): string {
 Given the topic and notes, decide:
 1. ANGLE: the single most surprising or emotionally resonant idea to build the post around. Not the obvious take — the one that makes someone stop scrolling. Just ONE; ignore the other notes as background.
 2. DETAIL: one concrete sensory or place detail from the notes to anchor it (a place, a moment, a bodily sensation, a name). Quote it. Cinematic specifics beat generic feelings.
-3. HOOKS: 3 candidate first lines, each under 15 words, each opening a curiosity gap. Each should use one of these patterns — contradiction / specific number or timeframe / sharp contrarian take / confession. Pick the best and mark it [BEST].
+3. HOOKS: 3 candidate first lines, each under 15 words, each opening a curiosity gap. Each should use one of these patterns — contradiction / specific number or timeframe / sharp contrarian take / confession / mistake warning (an error you made or see) / open question (a real one you're wrestling with). Prefer contradiction, mistake warning, or contrarian take — they earn the most replies. Pick the best and mark it [BEST].
 
 Be ruthless. Reject generic self-help angles. Favor tension, contradiction, lived specifics.
 Remember: on Threads the goal is to earn REPLIES — the angle should give a reader something to agree with, argue against, or add their own story to.
@@ -137,18 +139,29 @@ export function buildCritiqueRevisePrompt(format?: ThreadsFormat, voiceSamples: 
     : '';
 
   return `You are a light-touch editor protecting Daniil's authentic voice. Your default is to change as LITTLE as possible.
-Check the draft against this rubric:
-- Concrete: anchored to a real sensory/place detail (from the notes or the author's answers), not abstractions
-- Ending: invites a reply (question, challenge, or open thought) — not a closed, finished argument
-- Length: 40-120 words (~100-300 chars); trim if it runs long, never pad
-- One idea only: no multi-topic cramming
-- Clean: none of the banned phrases ("в современном мире", "важно понимать", "раскрыть потенциал", "трансформировать", corporate/coach tone), no engagement bait ("лайкни если", "напиши ДА"), no self-answering rhetorical questions${formatHint}
+
+Work in two steps.
+
+STEP 1 — Score the draft against each criterion INDEPENDENTLY. For every line answer PASS or FAIL, and if FAIL name the exact problem in a few words. Judge each on its own; a strong hook does NOT excuse a length or voice failure.
+- HOOK: first line under 15 words and opens a curiosity gap
+- ONE IDEA: a single idea, no multi-topic cramming
+- CONCRETE: anchored to a real sensory/place detail (from the notes or the author's answers), not abstractions
+- LENGTH: 40-120 words (~100-300 chars)
+- ENDING: invites a reply (question, challenge, or open thought), not a closed finished argument
+- CLEAN: no banned phrases ("в современном мире", "важно понимать", "раскрыть потенциал", "трансформировать", corporate/coach tone), no engagement bait ("лайкни если", "напиши ДА"), no self-answering rhetorical questions
+- QUOTE HONESTY: if the notes marked a detail as [QUOTE FROM ...], the draft must NOT present it as Daniil's own firsthand experience or a real conversation he had — it should be attributed or reformulated as a borrowed idea
+- VOICE: vocabulary, rhythm, register and irony match Daniil (not formalized)
+- TAG: exactly one topic tag in parentheses on its own final line${formatHint}
+
+STEP 2 — Revise. Fix ONLY the criteria you marked FAIL, keeping everything else word-for-word. Then output the final post.
 
 HARD RULES:
-- Do NOT rewrite the first line (the hook) unless it is factually wrong or over 15 words. The hook is the most valuable line — leave it.
+- Do NOT rewrite the first line (the hook) unless HOOK failed (factually wrong or over 15 words). The hook is the most valuable line — leave it.
 - Do NOT smooth out slight messiness, contractions, fragments, or irony — that IS the voice. Formalizing the text is a FAILURE.
-- If the draft passes every rubric point, return it COMPLETELY UNCHANGED.
-- If something fails, fix ONLY that, keeping everything else word-for-word.${voiceBlock}
+- If EVERY criterion is PASS, return the draft COMPLETELY UNCHANGED.
+- When trimming for length, never pad.
+
+OUTPUT: Write ONLY the final post text + one topic tag in parentheses on a new line. Do NOT print the checklist or any labels.${voiceBlock}
 
 ${RULES_BLOCK}`;
 }

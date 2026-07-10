@@ -719,6 +719,19 @@ export class ActionUpdate {
     );
   }
 
+  @Action('gen_edit')
+  async onGenEdit(@Ctx() ctx: BotContext): Promise<void> {
+    await ctx.answerCbQuery();
+    const gen = ctx.session?.contentGen;
+    if (!gen?.currentPost) return;
+
+    gen.awaitingEditText = true;
+
+    await ctx.editMessageText(
+      `Current post:\n\n${gen.currentPost}\n\n---\nSend your own edited version (text or voice). It becomes the post and is saved as a voice example:`,
+    );
+  }
+
   @Action('save_draft')
   async onSaveDraft(@Ctx() ctx: BotContext): Promise<void> {
     const gen = ctx.session?.contentGen;

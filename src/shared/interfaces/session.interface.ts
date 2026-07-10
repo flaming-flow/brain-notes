@@ -82,6 +82,8 @@ export interface ContentGeneration {
   currentPost: string; // last assistant message, used by Save actions
   format: string;
   awaitingRegenPrompt?: boolean;
+  // Manual edit: waiting for the author to send his own rewritten version of the post.
+  awaitingEditText?: boolean;
   // Unpacker: paused after retrieval, waiting for the author's answers before generating.
   contextBlock?: string;
   voiceSamples?: string[];

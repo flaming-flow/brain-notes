@@ -91,6 +91,12 @@ export class TextUpdate {
         return;
       }
 
+      // 0c. Author's own edit of the post (real human writing = best voice signal)
+      if (ctx.session?.contentGen?.awaitingEditText) {
+        await this.handleManualEdit(ctx, text);
+        return;
+      }
+
       // 1a. Music title input
       if (ctx.session?.pendingMusic?.awaitingTitle) {
         ctx.session.pendingMusic.awaitingTitle = false;
@@ -440,6 +446,33 @@ export class TextUpdate {
     gen.messages.push({ role: 'assistant', content: post });
     gen.currentPost = post;
     await this.commandUpdate.replyWithPost(ctx, post, gen.sources);
+  }
+
+  /**
+   * The author sent his own rewritten version of the post. This is genuine human
+   * writing, so it becomes the current post AND is saved as a voice sample — the
+   * strongest voice signal, better than approving AI output.
+   */
+  private async handleManualEdit(ctx: BotContext, text: string): Promise<void> {
+    const gen = ctx.session.contentGen!;
+    gen.awaitingEditText = false;
+
+    const edited = text.trim();
+    if (!edited) {
+      await ctx.reply('Empty edit, ignored.');
+      return;
+    }
+
+    gen.messages.push({
+      role: 'user',
+      content: 'I rewrote the post myself. Use this exact version going forward.',
+    });
+    gen.messages.push({ role: 'assistant', content: edited });
+    gen.currentPost = edited;
+
+    await this.contentAgent.saveVoiceSample(edited);
+    await ctx.reply('Saved your version as a voice example.');
+    await this.commandUpdate.replyWithPost(ctx, edited, gen.sources);
   }
 
   private normalizeHandle(input: string, platform?: string): string {
