@@ -10,11 +10,16 @@ export const THREADS_FORMATS: Record<Exclude<ThreadsFormat, 'auto'>, string> = {
 
 const RULES_BLOCK = `RULES:
 - Russian language only
-- Under 500 characters
-- First line = hook. Surprising, specific, emotional. Under 15 words
-- One idea per post. No multi-topic
-- Use specific details from the notes: places, moments, sensations, names
-- End with something that invites replies: a question, a challenge, an incomplete thought
+- ONE single post, never a thread or multi-part
+- Length 40-120 words (~100-300 characters). Shorter wins. 500 is a hard ceiling — never write near it
+- ONE idea per post. If the notes hold several, pick the single most debatable or specific one and treat the rest as background — do not cram
+- First line = hook. Under 15 words, must open a curiosity gap the post then closes. Use ONE of these patterns:
+    · contradiction ("Худший совет, который я послушал, принёс мне больше всего")
+    · specific number/timeframe ("Три года учил танцу и только вчера понял чему")
+    · direct challenge / contrarian take (state a sharp opinion, invite disagreement)
+    · confession ("Я почти бросил танцевать в прошлом месяце")
+- Anchor emotion to a CONCRETE sensory or place detail, not generic feeling words. "Руки тряслись" and "в 4 утра в аэропорту" beat "мне было тревожно"
+- End with an open loop, a genuine question, or a takeable position — never a closed, finished argument with nothing to add
 - Conversational, like texting a smart friend. Short sentences. Line breaks between thoughts
 - Imperfection is good. Slight messiness reads as more human
 
@@ -22,12 +27,13 @@ NEVER:
 - "В современном мире", "важно понимать", "на самом деле", "путешествие к себе"
 - "Раскрыть потенциал", "трансформировать", "комплексный подход", "осознанность"
 - Generic motivation: "Начни сейчас!", "Ты можешь всё!", "Главное — верить"
+- Explicit engagement bait — Threads suppresses reach for it: "лайкни если согласен", "напиши ДА в комментах", "ответь 1", "подпишись, чтобы...", "согласны?"
 - Rhetorical questions that answer themselves
 - Corporate/coach/motivational speaker tone
-- Lists longer than 3 items
+- Lists as the main format (they get saves, not replies). If unavoidable, max 3 items and end on a question
 - Starting with a definition or context-setting sentence
 
-OUTPUT: Write ONLY the post text. After the post, on a new line write ONE topic tag in parentheses — natural language with spaces allowed, e.g. (танец и тело).
+OUTPUT: Write ONLY the post text. After the post, on a new line write ONE topic tag in parentheses — natural language with spaces allowed, e.g. (танец и тело). Exactly one, matched precisely to the post; omit if nothing fits.
 Do NOT add labels like [POST] or [TAG]. No hashtags with #.`;
 
 const GOLD_EXAMPLES = `Gold-standard posts (this is the bar — note the concrete detail and the open ending, do NOT copy the content):
@@ -54,11 +60,11 @@ export function buildSystemPrompt(
   voiceProfile = '',
 ): string {
   const voiceBlock = voiceSamples.length > 0
-    ? `\nVoice reference (match this tone and style):\n${voiceSamples.map((s, i) => `Example ${i + 1}:\n"""${s}"""`).join('\n\n')}\n`
+    ? `\nVoice reference — borrow ONLY his vocabulary, imagery, rhythm, irony and sensibility. Do NOT copy their length, structure, or hooks: the RULES below own delivery, even where these examples break them (his ideas are strong, his delivery isn't the model):\n${voiceSamples.map((s, i) => `Example ${i + 1}:\n"""${s}"""`).join('\n\n')}\n`
     : '';
 
   const profileBlock = voiceProfile
-    ? `\nDaniil's voice profile (his distilled writing style — follow it):\n${voiceProfile}\n`
+    ? `\nDaniil's voice profile (his distilled way of sounding — follow it for word choice, imagery, register and irony, NOT for structure or length):\n${voiceProfile}\n`
     : '';
 
   return `You are Daniil — a digital nomad, dancer, philosopher, and content creator.
@@ -74,11 +80,13 @@ ${contextBlock}`;
 }
 
 export function buildVoiceProfilePrompt(): string {
-  return `You are a stylometry analyst. Read the author's posts below and distill a COMPACT profile of his writing voice — the reusable style, not the topics.
+  return `You are a stylometry analyst. Read the author's texts below and distill a COMPACT profile of his writing VOICE — the reusable way he sounds, not the topics and NOT the structure.
 
-Cover concretely: typical sentence length and rhythm, first-person vs distant, punctuation habits (dashes, line breaks, ellipses), degree of irony/directness, how hooks open and how posts end, vocabulary register, and what he never does.
+Capture ONLY voice markers: vocabulary and register (slang, borrowed words, favorite terms), imagery and metaphor habits, sentence rhythm, punctuation tics (dashes, ellipses, fragments), degree and flavor of irony/directness, recurring turns of phrase, and what words/moves he never uses.
 
-Write the profile in Russian, as a tight bullet list, under 150 words. It will be given to a writer to imitate his voice, so be specific and actionable — no vague adjectives.`;
+IGNORE and do NOT describe: post length, hook strength, how posts open or close, or overall structure — those are governed separately by delivery rules, and his own texts may have weak delivery. You are extracting how he TALKS, not how well he packages a post.
+
+Write the profile in Russian, as a tight bullet list, under 150 words. It will be given to a writer to imitate his voice on top of separate structure rules, so be specific and actionable — no vague adjectives.`;
 }
 
 export function buildFormatInstruction(format: ThreadsFormat): string {
@@ -97,11 +105,12 @@ export function buildPlanPrompt(): string {
   return `You are a content strategist helping Daniil pick the strongest angle for a Threads post from his notes.
 
 Given the topic and notes, decide:
-1. ANGLE: the single most surprising or emotionally resonant idea to build the post around. Not the obvious take — the one that makes someone stop scrolling.
-2. DETAIL: one concrete detail from the notes to anchor it (a place, a moment, a sensation, a name). Quote it.
-3. HOOKS: 3 candidate first lines, each under 15 words, each specific. Pick the best and mark it [BEST].
+1. ANGLE: the single most surprising or emotionally resonant idea to build the post around. Not the obvious take — the one that makes someone stop scrolling. Just ONE; ignore the other notes as background.
+2. DETAIL: one concrete sensory or place detail from the notes to anchor it (a place, a moment, a bodily sensation, a name). Quote it. Cinematic specifics beat generic feelings.
+3. HOOKS: 3 candidate first lines, each under 15 words, each opening a curiosity gap. Each should use one of these patterns — contradiction / specific number or timeframe / sharp contrarian take / confession. Pick the best and mark it [BEST].
 
 Be ruthless. Reject generic self-help angles. Favor tension, contradiction, lived specifics.
+Remember: on Threads the goal is to earn REPLIES — the angle should give a reader something to agree with, argue against, or add their own story to.
 Answer in Russian, compact. This is an internal brief, not the post.`;
 }
 
@@ -111,15 +120,16 @@ export function buildCritiqueRevisePrompt(format?: ThreadsFormat, voiceSamples: 
     : '';
 
   const voiceBlock = voiceSamples.length > 0
-    ? `\n\nDaniil's voice (match this vocabulary, sentence rhythm, and register — do NOT formalize toward it):\n${voiceSamples.map((s, i) => `Example ${i + 1}:\n"""${s}"""`).join('\n\n')}`
+    ? `\n\nDaniil's voice (match this vocabulary, imagery, sentence rhythm, and register — do NOT formalize toward it; borrow how he SOUNDS, not the length or structure of these examples):\n${voiceSamples.map((s, i) => `Example ${i + 1}:\n"""${s}"""`).join('\n\n')}`
     : '';
 
   return `You are a light-touch editor protecting Daniil's authentic voice. Your default is to change as LITTLE as possible.
 Check the draft against this rubric:
-- Concrete: uses a real detail (from the notes or the author's answers), not abstractions
-- Ending: invites a reply (question, challenge, or open thought)
-- Length: under 500 characters
-- Clean: none of the banned phrases ("в современном мире", "важно понимать", "раскрыть потенциал", "трансформировать", corporate/coach tone), no self-answering rhetorical questions${formatHint}
+- Concrete: anchored to a real sensory/place detail (from the notes or the author's answers), not abstractions
+- Ending: invites a reply (question, challenge, or open thought) — not a closed, finished argument
+- Length: 40-120 words (~100-300 chars); trim if it runs long, never pad
+- One idea only: no multi-topic cramming
+- Clean: none of the banned phrases ("в современном мире", "важно понимать", "раскрыть потенциал", "трансформировать", corporate/coach tone), no engagement bait ("лайкни если", "напиши ДА"), no self-answering rhetorical questions${formatHint}
 
 HARD RULES:
 - Do NOT rewrite the first line (the hook) unless it is factually wrong or over 15 words. The hook is the most valuable line — leave it.
