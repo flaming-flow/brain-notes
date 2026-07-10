@@ -263,7 +263,7 @@ export class ContentAgentService {
         buildUnpackPrompt(),
         `Topic: ${topic}\n\nNotes:\n${contextBlock}`,
         0.7,
-        300,
+        600,
       );
       const match = raw.match(/\[[\s\S]*\]/);
       if (!match) return [];
