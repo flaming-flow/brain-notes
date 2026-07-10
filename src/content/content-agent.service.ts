@@ -518,6 +518,22 @@ export class ContentAgentService {
       return { title, body: meta + (noteBody ? '\n' + noteBody : '') };
     }
 
-    return { title, body: bodyMatch?.[1]?.trim() || content };
+    const body = bodyMatch?.[1]?.trim() || content;
+
+    // Flag book quotes so generation never presents them as the author's own lived experience.
+    const source = content.match(/^source:\s*"?(.+?)"?\s*$/m)?.[1];
+    if (source === 'quote') {
+      const author = content.match(/^author:\s*"?(.+?)"?\s*$/m)?.[1] || '';
+      const bookTitle = content.match(/^book_title:\s*"?(.+?)"?\s*$/m)?.[1] || '';
+      const origin = [author, bookTitle ? `«${bookTitle}»` : '']
+        .filter(Boolean)
+        .join(', ');
+      const marker = origin
+        ? `[QUOTE FROM ${origin} — this is a book quote the author saved and embraces, NOT his own firsthand experience. Present it as an idea from that source, or reformulate it in his own voice; never narrate it as a conversation or event he personally lived.]`
+        : `[QUOTE the author saved from an external source — NOT his own firsthand experience. Present it as a borrowed idea or reformulate it; never narrate it as something he personally lived.]`;
+      return { title, body: `${marker}\n${body}` };
+    }
+
+    return { title, body };
   }
 }

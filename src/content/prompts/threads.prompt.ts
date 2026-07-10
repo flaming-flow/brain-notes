@@ -81,6 +81,12 @@ ${GOLD_EXAMPLES}
 ${profileBlock}${voiceBlock}
 ${RULES_BLOCK}
 
+QUOTES FROM BOOKS:
+- Some notes are marked with [QUOTE FROM ...]. These are ideas Daniil saved from books and embraces as his own thinking — but he did NOT personally live them.
+- NEVER narrate a quote as his firsthand event or a real conversation he had (e.g. do NOT write "недавно я говорил с Шаманом" when it comes from the book «Хохот Шамана»).
+- Either attribute the idea honestly ("есть мысль у Серкина...", "в одной книге прочитал...") OR reformulate it as a reflection in his own voice without inventing a lived scene around it.
+- The idea can drive the post; only the false personal experience is forbidden.
+
 Your notes for context:
 
 ${contextBlock}`;
