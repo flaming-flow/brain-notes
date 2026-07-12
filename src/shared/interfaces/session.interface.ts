@@ -89,6 +89,12 @@ export interface ContentGeneration {
   voiceSamples?: string[];
   unpackQuestions?: string[];
   awaitingUnpackAnswers?: boolean;
+  // Storytelling-plot axis (optional second step on top of a generated post).
+  basePost?: string; // the un-plotted post (v1); plot restyles always start from here
+  suggestedPlots?: { id: string; label: string }[];
+  activePlot?: string; // plot id currently being previewed as v2
+  plotIntensity?: number; // -2..2, 0 = base
+  plotPreview?: string; // current v2 text being previewed (not yet accepted)
 }
 
 export interface SavedNoteRef {

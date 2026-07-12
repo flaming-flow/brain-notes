@@ -12,6 +12,9 @@ import {
   buildTopicSuggestPrompt,
   buildUnpackPrompt,
   buildVoiceProfilePrompt,
+  buildPlotSuggestPrompt,
+  buildPlotRestylePrompt,
+  STORY_PLOTS,
   type ThreadsFormat,
 } from './prompts/threads.prompt.js';
 import type { ContentGenMessage } from '../shared/interfaces/session.interface.js';
@@ -336,6 +339,68 @@ export class ContentAgentService {
     );
 
     return final || draft || 'Failed to generate.';
+  }
+
+  /**
+   * Pick the 2-3 storytelling plots that genuinely fit this post + its notes.
+   * Returns id+label pairs for the plot buttons. Empty on failure.
+   */
+  async suggestPlots(
+    currentPost: string,
+    contextBlock: string,
+  ): Promise<Array<{ id: string; label: string }>> {
+    try {
+      const raw = await this.chat(
+        this.model,
+        buildPlotSuggestPrompt(),
+        `Post:\n${currentPost}\n\nSource notes:\n${contextBlock}`,
+        0.4,
+        120,
+      );
+      const match = raw.match(/\[[\s\S]*\]/);
+      if (!match) return [];
+      const ids = JSON.parse(match[0]) as string[];
+      return ids
+        .filter((id) => typeof id === 'string' && STORY_PLOTS[id])
+        .slice(0, 3)
+        .map((id) => ({ id, label: STORY_PLOTS[id].label }));
+    } catch (err) {
+      this.logger.warn(`suggestPlots failed: ${(err as Error).message}`);
+      return [];
+    }
+  }
+
+  /**
+   * Reshape `basePost` into a storytelling plot's arc. Always transforms FROM
+   * the base (v1), so intensity steps are absolute, not cumulative drift.
+   * Reshapes narrative shape only — voice samples keep vocabulary/register/irony
+   * intact. `level`: <0 softer, 0 base, >0 stronger.
+   */
+  async restyleWithPlot(
+    basePost: string,
+    contextBlock: string,
+    plotId: string,
+    level: number,
+    voiceSamples: string[] = [],
+  ): Promise<string> {
+    const prompt = buildPlotRestylePrompt(plotId, level);
+    if (!prompt) return basePost;
+
+    const voiceBlock =
+      voiceSamples.length > 0
+        ? `\n\nDaniil's voice (keep this vocabulary, imagery, rhythm and irony — do NOT formalize toward it):\n${voiceSamples
+            .map((s, i) => `Example ${i + 1}:\n"""${s}"""`)
+            .join('\n\n')}`
+        : '';
+
+    const result = await this.chat(
+      this.contentModel,
+      prompt + voiceBlock,
+      `Source notes:\n${contextBlock}\n\nCurrent post to reshape:\n${basePost}`,
+      0.85,
+      500,
+    );
+    return result || basePost;
   }
 
   /**

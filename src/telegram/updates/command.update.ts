@@ -8,6 +8,7 @@ import { CouchDBSyncService } from '../../couchdb/couchdb-sync.service.js';
 import { EmbeddingService } from '../../vector/embedding.service.js';
 import { ContentAgentService } from '../../content/content-agent.service.js';
 import { THREADS_FORMATS, type ThreadsFormat } from '../../content/prompts/threads.prompt.js';
+import type { ContentGeneration } from '../../shared/interfaces/session.interface.js';
 import type { BotContext } from '../../shared/interfaces/session.interface.js';
 
 const CONTACTS_PER_PAGE = 8;
@@ -321,37 +322,109 @@ export class CommandUpdate {
     await this.replyWithPost(ctx, post, gen.sources);
   }
 
-  replyWithPost(ctx: BotContext, post: string, sources: string[] = []): Promise<void> {
-    const esc = (s: string) =>
-      s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  private static escHtml(s: string): string {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
 
+  /** Inline keyboard for a primary post. Suggested storytelling plots (if any)
+   *  get their own row plus an "Авто" button, above the format row. */
+  private buildPostKeyboard(plots: { id: string; label: string }[] = []) {
+    const rows: ReturnType<typeof Markup.button.callback>[][] = [
+      [
+        Markup.button.callback('Regenerate', 'regen_threads'),
+        Markup.button.callback('Edit', 'gen_edit'),
+      ],
+    ];
+
+    if (plots.length > 0) {
+      rows.push(plots.map((p) => Markup.button.callback(p.label, `gen_plot:${p.id}`)));
+      rows.push([Markup.button.callback('Авто — сюжет', 'gen_plot:auto')]);
+    }
+
+    rows.push(
+      Object.entries(THREADS_FORMATS).map(([key, label]) =>
+        Markup.button.callback(label, `gen_format:${key}`),
+      ),
+    );
+    rows.push([
+      Markup.button.callback('Save as draft', 'save_draft'),
+      Markup.button.callback('Save as example', 'save_example'),
+    ]);
+    rows.push([Markup.button.callback('Cancel', 'gen_cancel')]);
+
+    return Markup.inlineKeyboard(rows);
+  }
+
+  /** Send a primary post: resets the plot base to this post, refreshes plot
+   *  suggestions, and renders with the plot row. Used for every fresh v1,
+   *  regen, format switch, and manual edit. */
+  async replyWithPost(ctx: BotContext, post: string, sources: string[] = []): Promise<void> {
+    const gen = ctx.session?.contentGen;
+    let plots: { id: string; label: string }[] = [];
+    if (gen) {
+      gen.currentPost = post;
+      gen.basePost = post;
+      gen.activePlot = undefined;
+      gen.plotIntensity = undefined;
+      gen.plotPreview = undefined;
+      plots = await this.contentAgent.suggestPlots(post, gen.contextBlock ?? '');
+      gen.suggestedPlots = plots;
+    }
+
+    const esc = CommandUpdate.escHtml;
     // Post text wrapped in <pre> so Telegram renders a tap-to-copy block
     // containing ONLY the post; sources stay outside it as plain text.
     const sourcesText = sources.length > 0
       ? `\n\nBased on: ${sources.map((s) => `"${esc(s)}"`).join(', ')}`
       : '';
 
-    const formatButtons = Object.entries(THREADS_FORMATS).map(
-      ([key, label]) => Markup.button.callback(label, `gen_format:${key}`),
-    );
-
-    const keyboard = Markup.inlineKeyboard([
-      [
-        Markup.button.callback('Regenerate', 'regen_threads'),
-        Markup.button.callback('Edit', 'gen_edit'),
-      ],
-      formatButtons,
-      [
-        Markup.button.callback('Save as draft', 'save_draft'),
-        Markup.button.callback('Save as example', 'save_example'),
-      ],
-      [Markup.button.callback('Cancel', 'gen_cancel')],
-    ]);
-
-    return ctx.reply(`<pre>${esc(post)}</pre>${sourcesText}`, {
+    await ctx.reply(`<pre>${esc(post)}</pre>${sourcesText}`, {
       parse_mode: 'HTML',
-      reply_markup: keyboard.reply_markup,
-    }) as unknown as Promise<void>;
+      reply_markup: this.buildPostKeyboard(plots).reply_markup,
+    });
+  }
+
+  /** Keyboard for a plot preview (v2): intensity toggle + keep/revert. */
+  private buildPlotPreviewKeyboard() {
+    return Markup.inlineKeyboard([
+      [
+        Markup.button.callback('Сильнее ▲', 'gen_plot_stronger'),
+        Markup.button.callback('Мягче ▼', 'gen_plot_softer'),
+      ],
+      [
+        Markup.button.callback('Оставить v2', 'gen_plot_keep'),
+        Markup.button.callback('Вернуть v1', 'gen_plot_revert'),
+      ],
+    ]);
+  }
+
+  /** Send a plot-restyled variant (v2) as a NEW message under v1 so both stay
+   *  visible for comparison. */
+  async replyWithPlotPreview(ctx: BotContext, v2: string, plotLabel: string): Promise<void> {
+    const esc = CommandUpdate.escHtml;
+    await ctx.reply(`Сюжет: ${esc(plotLabel)}\n<pre>${esc(v2)}</pre>`, {
+      parse_mode: 'HTML',
+      reply_markup: this.buildPlotPreviewKeyboard().reply_markup,
+    });
+  }
+
+  /** Edit an existing plot-preview message in place (intensity change). */
+  async editPlotPreview(ctx: BotContext, v2: string, plotLabel: string): Promise<void> {
+    const esc = CommandUpdate.escHtml;
+    await ctx.editMessageText(`Сюжет: ${esc(plotLabel)}\n<pre>${esc(v2)}</pre>`, {
+      parse_mode: 'HTML',
+      reply_markup: this.buildPlotPreviewKeyboard().reply_markup,
+    });
+  }
+
+  /** Turn the current plot preview message into the accepted primary post:
+   *  swap its keyboard to the full post keyboard with fresh plot suggestions. */
+  async acceptPlotPreview(ctx: BotContext, plots: { id: string; label: string }[]): Promise<void> {
+    await ctx.editMessageReplyMarkup(this.buildPostKeyboard(plots).reply_markup);
+  }
+
+  suggestPlotsFor(gen: ContentGeneration): Promise<{ id: string; label: string }[]> {
+    return this.contentAgent.suggestPlots(gen.currentPost, gen.contextBlock ?? '');
   }
 
   @Command('reindex')

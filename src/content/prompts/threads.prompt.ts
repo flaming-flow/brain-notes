@@ -8,6 +8,62 @@ export const THREADS_FORMATS: Record<Exclude<ThreadsFormat, 'auto'>, string> = {
   framework: 'Framework',
 };
 
+// The 7 classic storytelling plots. A plot is a NARRATIVE ARC applied on top of an
+// already-written post as an optional second step — it reshapes the story's shape
+// only, never the author's voice (vocabulary/register/irony stay untouched).
+export interface StoryPlot {
+  id: string;
+  label: string; // Russian button label
+  arc: string; // one-line arc description
+  example: string; // short example (shape reference, not content to copy)
+}
+
+export const STORY_PLOTS: Record<string, StoryPlot> = {
+  monster: {
+    id: 'monster',
+    label: 'Победа над чудовищем',
+    arc: 'Есть враг (страх, лень, система, алгоритмы, вредная привычка). Показываешь, как его победить.',
+    example:
+      'Я тоже боялся снимать разговорные ролики — пока не понял, что мой лишний вес и прыщ на лбу никто даже не заметит.',
+  },
+  rags: {
+    id: 'rags',
+    label: 'Из грязи в князи',
+    arc: 'Трансформация было-плохо → стало-хорошо. Важен путь к результату и контекст, а не хвастовство.',
+    example: 'Год назад я сидел с долгами на съёмной квартире, а сегодня получил визу талантов в США.',
+  },
+  quest: {
+    id: 'quest',
+    label: 'Путь к цели',
+    arc: 'Публично ставишь цель и идёшь к ней; читатель — болельщик. Есть ставка, есть что терять.',
+    example: 'Цель: 10к подписчиков за месяц без вложений. Не наберу — побреюсь налысо. Формат: ежедневный отчёт.',
+  },
+  voyage: {
+    id: 'voyage',
+    label: 'Путешествие и возвращение',
+    arc: 'Выпадаешь из привычной реальности, получаешь опыт, возвращаешься другим — и делишься выводом.',
+    example: 'Уехал в деревню без связи: первые сутки была ломка, а на вторые я впервые услышал тишину в голове.',
+  },
+  comedy: {
+    id: 'comedy',
+    label: 'Комедия',
+    arc: 'Самоирония: расскажи о своём косяке и посмейся над собой же. Сближает лучше экспертных щей.',
+    example: 'Отправила клиенту счёт и случайно прикрепила голую фотку (а потом продала ему доп. услугу).',
+  },
+  tragedy: {
+    id: 'tragedy',
+    label: 'Трагедия',
+    arc: 'История потери, которая сделала сильнее. Не нытьё ради нытья — потеря с выводом.',
+    example: 'Потерял 3 млн на запуске, потому что был слишком самоуверен. Это стоило денег, но научило главному.',
+  },
+  rebirth: {
+    id: 'rebirth',
+    label: 'Перерождение',
+    arc: 'Смена ценностей: был одним, случилось событие — стал другим. Самый эмоциональный сюжет.',
+    example: 'Раньше тратила всё на брендовые шмотки, чтобы нравиться другим, а теперь — на психолога, чтобы нравиться себе.',
+  },
+};
+
 const RULES_BLOCK = `RULES:
 - Russian language only
 - ONE single post, never a thread or multi-part
@@ -228,6 +284,50 @@ Bad topics:
 
 Each topic should be a short phrase (3-7 words) in the same language as the notes.
 Return ONLY a JSON array of exactly ${count} strings, nothing else. Example: ["topic 1", "topic 2"]`;
+}
+
+export function buildPlotSuggestPrompt(): string {
+  const catalog = Object.values(STORY_PLOTS)
+    .map((p) => `- ${p.id} (${p.label}): ${p.arc}`)
+    .join('\n');
+  return `You pick which storytelling plots genuinely fit a given Threads post and its source notes.
+
+The 7 plots:
+${catalog}
+
+Choose the 2-3 plots whose ARC the material can honestly support — where the notes actually contain an enemy to beat, a real transformation, a goal with stakes, a journey-and-return, a self-ironic mishap, a loss, or a shift of values. Reject a plot if forcing it would require inventing events that aren't in the material. Order best fit first.
+
+Return ONLY a JSON array of 2-3 plot ids. Example: ["rebirth","voyage"]`;
+}
+
+export function buildPlotRestylePrompt(plotId: string, level: number): string {
+  const plot = STORY_PLOTS[plotId];
+  if (!plot) return '';
+
+  const intensity =
+    level > 0
+      ? 'INTENSITY: push HARD. Sharpen the arc\'s turning point, make the before/after or the stakes unmistakable, lean into one or two vivid sensory/bodily details. Noticeably bolder than a restrained diary post — but never purple, dramatic for its own sake, or fake.'
+      : level < 0
+        ? 'INTENSITY: keep it restrained and understated. Let the arc show through quietly — trust one small concrete detail over a dramatic build-up.'
+        : 'INTENSITY: moderate — clearly more shaped and bolder than a plain diary note, with a visible arc, but still grounded and honest.';
+
+  return `You reshape Daniil's existing Threads post into the "${plot.label}" storytelling arc. This is a restyle of a post he already wrote — same idea, new shape.
+
+THE ARC: ${plot.arc}
+Shape reference for this arc (mimic its SHAPE, never copy its content): "${plot.example}"
+
+WHAT YOU CHANGE: only the NARRATIVE SHAPE — reorder and frame the same idea so it follows this arc (setup → turn → takeaway, as the arc demands).
+WHAT YOU KEEP UNTOUCHED: his voice — vocabulary, register, irony, sentence rhythm. Do NOT formalize, do NOT trade his words for fancier ones. Do NOT invent events, people, numbers, or facts that aren't in the post or notes. If the arc wants a beat the material lacks, imply it lightly rather than fabricate a scene.
+
+${intensity}
+
+READER PAYOFF: the post must leave the reader something to carry away. Run it through "и что с того?" — end by bridging from your experience to the reader's (an open question or a takeable position aimed at them), never closing on yourself.
+
+Obey every rule in the RULES block below (length, single idea, hook, show-don't-tell, no engagement bait, exactly one topic tag).
+
+OUTPUT: ONLY the reworked post text, then one topic tag in parentheses on a new line. No labels, no explanation.
+
+${RULES_BLOCK}`;
 }
 
 function formatDescription(format: ThreadsFormat): string {

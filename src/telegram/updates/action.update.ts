@@ -10,7 +10,7 @@ import { VaultReaderService } from '../../vault/vault-reader.service.js';
 import { CouchDBSyncService } from '../../couchdb/couchdb-sync.service.js';
 import { EmbeddingService } from '../../vector/embedding.service.js';
 import { ContentAgentService } from '../../content/content-agent.service.js';
-import type { ThreadsFormat } from '../../content/prompts/threads.prompt.js';
+import { STORY_PLOTS, type ThreadsFormat } from '../../content/prompts/threads.prompt.js';
 import { TextUpdate } from './text.update.js';
 import { CommandUpdate } from './command.update.js';
 import type { BotContext } from '../../shared/interfaces/session.interface.js';
@@ -704,6 +704,108 @@ export class ActionUpdate {
     gen.messages.push({ role: 'assistant', content: post });
     gen.currentPost = post;
     await this.commandUpdate.replyWithPost(ctx, post, gen.sources);
+  }
+
+  // --- Storytelling-plot axis: optional v2 restyle on top of the base post ---
+
+  @Action(/^gen_plot:.+$/)
+  async onGenPlot(@Ctx() ctx: BotContext): Promise<void> {
+    const raw = (ctx.callbackQuery as { data?: string })?.data?.replace('gen_plot:', '') || '';
+    const gen = ctx.session?.contentGen;
+    if (!gen?.basePost) {
+      await ctx.answerCbQuery('No active post');
+      return;
+    }
+
+    const plotId = raw === 'auto' ? gen.suggestedPlots?.[0]?.id : raw;
+    if (!plotId || !STORY_PLOTS[plotId]) {
+      await ctx.answerCbQuery('No plot');
+      return;
+    }
+
+    await ctx.answerCbQuery(`${STORY_PLOTS[plotId].label}...`);
+    gen.activePlot = plotId;
+    gen.plotIntensity = 0;
+
+    const v2 = await this.contentAgent.restyleWithPlot(
+      gen.basePost,
+      gen.contextBlock ?? '',
+      plotId,
+      0,
+      gen.voiceSamples ?? [],
+    );
+    gen.plotPreview = v2;
+    await this.commandUpdate.replyWithPlotPreview(ctx, v2, STORY_PLOTS[plotId].label);
+  }
+
+  @Action('gen_plot_stronger')
+  async onGenPlotStronger(@Ctx() ctx: BotContext): Promise<void> {
+    await this.adjustPlotIntensity(ctx, 1);
+  }
+
+  @Action('gen_plot_softer')
+  async onGenPlotSofter(@Ctx() ctx: BotContext): Promise<void> {
+    await this.adjustPlotIntensity(ctx, -1);
+  }
+
+  private async adjustPlotIntensity(ctx: BotContext, delta: number): Promise<void> {
+    const gen = ctx.session?.contentGen;
+    if (!gen?.activePlot || !gen.basePost) {
+      await ctx.answerCbQuery('No active plot');
+      return;
+    }
+
+    const level = Math.max(-2, Math.min(2, (gen.plotIntensity ?? 0) + delta));
+    gen.plotIntensity = level;
+    await ctx.answerCbQuery(delta > 0 ? 'Сильнее...' : 'Мягче...');
+
+    const v2 = await this.contentAgent.restyleWithPlot(
+      gen.basePost,
+      gen.contextBlock ?? '',
+      gen.activePlot,
+      level,
+      gen.voiceSamples ?? [],
+    );
+    gen.plotPreview = v2;
+    await this.commandUpdate.editPlotPreview(ctx, v2, STORY_PLOTS[gen.activePlot].label);
+  }
+
+  @Action('gen_plot_keep')
+  async onGenPlotKeep(@Ctx() ctx: BotContext): Promise<void> {
+    const gen = ctx.session?.contentGen;
+    if (!gen?.plotPreview || !gen.activePlot) {
+      await ctx.answerCbQuery('Nothing to keep');
+      return;
+    }
+
+    const kept = gen.plotPreview;
+    const label = STORY_PLOTS[gen.activePlot]?.label ?? gen.activePlot;
+    await ctx.answerCbQuery('Оставил v2');
+
+    gen.messages.push({ role: 'user', content: `Rewrite using the "${label}" storytelling arc.` });
+    gen.messages.push({ role: 'assistant', content: kept });
+    // The kept variant becomes the new base so a further plot can stack on it.
+    gen.currentPost = kept;
+    gen.basePost = kept;
+    gen.activePlot = undefined;
+    gen.plotIntensity = undefined;
+    gen.plotPreview = undefined;
+
+    gen.suggestedPlots = await this.commandUpdate.suggestPlotsFor(gen);
+    await this.commandUpdate.acceptPlotPreview(ctx, gen.suggestedPlots);
+  }
+
+  @Action('gen_plot_revert')
+  async onGenPlotRevert(@Ctx() ctx: BotContext): Promise<void> {
+    const gen = ctx.session?.contentGen;
+    await ctx.answerCbQuery('Вернул v1');
+    if (gen) {
+      gen.activePlot = undefined;
+      gen.plotIntensity = undefined;
+      gen.plotPreview = undefined;
+    }
+    // v1 stays above with its own keyboard intact; just clear this preview.
+    await ctx.editMessageText('↩︎ Вернулись к первому варианту (выше).');
   }
 
   @Action('regen_threads')
