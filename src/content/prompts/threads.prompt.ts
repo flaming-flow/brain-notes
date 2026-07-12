@@ -20,7 +20,7 @@ const RULES_BLOCK = `RULES:
     · confession ("Я почти бросил танцевать в прошлом месяце")
     · mistake warning (name an error you made or see others make: "Я годами делал это неправильно и не замечал")
     · open question (a real question you're wrestling with, not rhetorical: "Почему тишина пугает сильнее шума?")
-- Anchor emotion to a CONCRETE sensory or place detail, not generic feeling words. "Руки тряслись" and "в 4 утра в аэропорту" beat "мне было тревожно"
+- SHOW, DON'T TELL. Never name a feeling — show the scene or the body. "Руки тряслись" and "в 4 утра в аэропорту" beat "мне было тревожно"; "завёл будильник и смотрел в потолок" beats "мир рухнул". Strong verbs over adverb+verb ("заорал" not "громко крикнул"). Concrete objects over abstractions ("кактус" not "цветок"). Exact numbers ("6400 рублей" not "куча денег"). One vivid detail per thought — don't pile them up
 - End with an open loop, a genuine question, or a takeable position — never a closed, finished argument with nothing to add
 - Conversational, like texting a smart friend. Short sentences. Line breaks between thoughts
 - Imperfection is good. Slight messiness reads as more human
@@ -34,6 +34,10 @@ NEVER:
 - Corporate/coach/motivational speaker tone
 - Lists as the main format (they get saves, not replies). If unavoidable, max 3 items and end on a question
 - Starting with a definition or context-setting sentence
+- Crutch intensifiers and adverbs — replace with a stronger verb: "очень", "крайне", "абсолютно", "громко", "быстро"
+- Filler and linking words: "таким образом", "следовательно", "в принципе", "как бы", "лично я"
+- Verbal-noun bureaucratese — use a live verb instead: "осуществление проверки" → "проверил"
+- Naming the emotion outright ("мне было грустно / страшно / стыдно") instead of showing it
 
 OUTPUT: Write ONLY the post text. After the post, on a new line write ONE topic tag in parentheses — natural language with spaces allowed, e.g. (танец и тело). Exactly one, matched precisely to the post; omit if nothing fits.
 Do NOT add labels like [POST] or [TAG]. No hashtags with #.`;
@@ -146,9 +150,10 @@ STEP 1 — Score the draft against each criterion INDEPENDENTLY. For every line 
 - HOOK: first line under 15 words and opens a curiosity gap
 - ONE IDEA: a single idea, no multi-topic cramming
 - CONCRETE: anchored to a real sensory/place detail (from the notes or the author's answers), not abstractions
+- SHOW NOT TELL: no named emotions ("было грустно / страшно / стыдно") — feelings are shown via scene, body reaction, or action. Strong verbs, not adverb+verb ("заорал" not "громко крикнул"). Concrete nouns and exact numbers, not abstractions ("куча денег")
 - LENGTH: 40-120 words (~100-300 chars)
 - ENDING: invites a reply (question, challenge, or open thought), not a closed finished argument
-- CLEAN: no banned phrases ("в современном мире", "важно понимать", "раскрыть потенциал", "трансформировать", corporate/coach tone), no engagement bait ("лайкни если", "напиши ДА"), no self-answering rhetorical questions
+- CLEAN: no banned phrases ("в современном мире", "важно понимать", "раскрыть потенциал", "трансформировать", corporate/coach tone), no engagement bait ("лайкни если", "напиши ДА"), no self-answering rhetorical questions, no crutch intensifiers/adverbs ("очень", "крайне", "громко"), no filler/linking words ("таким образом", "в принципе", "как бы"), no verbal-noun bureaucratese ("осуществление проверки")
 - QUOTE HONESTY: if the notes marked a detail as [QUOTE FROM ...], the draft must NOT present it as Daniil's own firsthand experience or a real conversation he had — it should be attributed or reformulated as a borrowed idea
 - VOICE: vocabulary, rhythm, register and irony match Daniil (not formalized)
 - TAG: exactly one topic tag in parentheses on its own final line${formatHint}
