@@ -112,6 +112,12 @@ export interface AutoLinkedContacts {
   names: string[];
 }
 
+export interface AutoLinkedNotes {
+  noteDocId: string; // the just-saved note that received the links
+  noteWikilink: string; // its own wikilink, for removing backlinks on unlink
+  links: { docId: string; wikilink: string }[]; // related notes linked bidirectionally
+}
+
 export interface BotSession {
   pendingNote?: PendingNote;
   pendingContact?: PendingContact;
@@ -125,6 +131,7 @@ export interface BotSession {
   contentGen?: ContentGeneration;
   pendingPeople?: PendingPeople;
   autoLinkedContacts?: AutoLinkedContacts;
+  autoLinkedNotes?: AutoLinkedNotes;
 }
 
 export type BotContext = Context & { session: BotSession };

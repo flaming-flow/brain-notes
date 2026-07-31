@@ -23,6 +23,12 @@ export default () => ({
       sourceLimit: parseInt(process.env.ASK_SOURCE_LIMIT || '10', 10),
       widePool: parseInt(process.env.ASK_WIDE_POOL || '500', 10),
     },
+    // Auto-linking [[related]] notes on save — all env-configurable.
+    autolink: {
+      enabled: process.env.AUTOLINK_ENABLED !== 'false', // on by default
+      threshold: parseFloat(process.env.AUTOLINK_THRESHOLD || '0.4'), // dense cosine 0..1; stronger than tag-select 0.3
+      max: parseInt(process.env.AUTOLINK_MAX || '3', 10), // how many related notes to link
+    },
     // Content generation tuning — all env-configurable.
     content: {
       topicCount: parseInt(process.env.CONTENT_TOPIC_COUNT || '10', 10), // how many topics /generate suggests

@@ -245,6 +245,16 @@ export class ActionUpdate {
           this.logger.warn(`Contact suggestion failed: ${err}`);
         }
       }
+
+      // Auto-link [[related]] diary notes by semantic similarity. Notes only —
+      // contacts/projects/events have their own linking structures.
+      if (pending.classification.entityType === 'note') {
+        try {
+          await this.suggestRelatedNotes(ctx, filePath, pending.content);
+        } catch (err) {
+          this.logger.warn(`Related-note linking failed: ${err}`);
+        }
+      }
     } catch (error) {
       this.logger.error(`Error saving: ${error}`);
       await ctx.answerCbQuery('Error saving');
@@ -274,6 +284,70 @@ export class ActionUpdate {
   // confident enough to surface as a "link?" suggestion. Below this we stay
   // silent to avoid noise on every note.
   private static readonly SEMANTIC_CONTACT_THRESHOLD = 0.45;
+
+  // --- Related-note auto-linking ---
+
+  private static readonly RELATED_HEADING = '## Related';
+
+  // docId "inbox/foo.md" → wikilink target "foo".
+  private wikiName(docId: string): string {
+    return docId.replace(/^[^/]+\//, '').replace(/\.md$/, '');
+  }
+
+  // Append "- [[wikilink]]" under a "## Related" section (created if absent),
+  // deduplicated. Body change is picked up by the vector change-feed.
+  private async linkRelatedNote(noteDocId: string, wikilink: string): Promise<void> {
+    const content = await this.couchSync.readFile(noteDocId);
+    if (!content || content.includes(`[[${wikilink}]]`)) return;
+    let updated = content.trimEnd();
+    if (!updated.includes(ActionUpdate.RELATED_HEADING)) {
+      updated += `\n\n${ActionUpdate.RELATED_HEADING}`;
+    }
+    updated += `\n- [[${wikilink}]]\n`;
+    await this.couchSync.writeFile(noteDocId, updated);
+  }
+
+  // Remove a "- [[wikilink]]" bullet, dropping an orphaned "## Related" heading.
+  private async unlinkRelatedNote(noteDocId: string, wikilink: string): Promise<void> {
+    const content = await this.couchSync.readFile(noteDocId);
+    if (!content) return;
+    let updated = content.replace(
+      new RegExp(`\\n*-\\s*\\[\\[${this.escapeRegExp(wikilink)}\\]\\]`),
+      '',
+    );
+    updated = updated.replace(/\n*## Related\s*(?=\n#|\n*$)/, '\n');
+    updated = updated.trimEnd() + '\n';
+    await this.couchSync.writeFile(noteDocId, updated);
+  }
+
+  private async suggestRelatedNotes(
+    ctx: BotContext,
+    noteDocId: string,
+    noteText: string,
+  ): Promise<void> {
+    if (!this.embedding?.autoLinkEnabled) return;
+
+    const related = await this.embedding.findRelated(noteDocId, noteText);
+    if (related.length === 0) return;
+
+    const selfWikilink = this.wikiName(noteDocId);
+    const links = related.map((r) => ({ docId: r.docId, wikilink: this.wikiName(r.docId) }));
+
+    // Link bidirectionally: new note ← → each related note.
+    for (const { docId, wikilink } of links) {
+      await this.linkRelatedNote(noteDocId, wikilink);
+      await this.linkRelatedNote(docId, selfWikilink);
+    }
+
+    ctx.session ??= {} as BotContext['session'];
+    ctx.session.autoLinkedNotes = { noteDocId, noteWikilink: selfWikilink, links };
+
+    const buttons = links.map((l, idx) => [
+      Markup.button.callback(`Unlink ${l.wikilink}`, `unlink_note:${idx}`),
+    ]);
+    const linked = links.map((l) => `[[${l.wikilink}]]`).join(', ');
+    await ctx.reply(`Linked to: ${linked}`, Markup.inlineKeyboard(buttons));
+  }
 
   // Append a [[Name]] wikilink to a note in CouchDB, deduplicated.
   private async linkContactToNote(noteDocId: string, contactName: string): Promise<void> {
@@ -473,6 +547,35 @@ export class ActionUpdate {
     } else {
       ctx.session.autoLinkedContacts = undefined;
       await ctx.editMessageText(`Unlinked [[${contactName}]].`);
+    }
+  }
+
+  @Action(/^unlink_note:(\d+)$/)
+  async onUnlinkNote(@Ctx() ctx: BotContext): Promise<void> {
+    const callbackData = (ctx.callbackQuery as { data?: string })?.data;
+    const idx = parseInt(callbackData?.replace('unlink_note:', '') || '', 10);
+    const autoLinked = ctx.session?.autoLinkedNotes;
+    const link = autoLinked?.links[idx];
+    if (!autoLinked || !link) {
+      await ctx.answerCbQuery('Expired');
+      return;
+    }
+
+    // Remove both directions of the link.
+    await this.unlinkRelatedNote(autoLinked.noteDocId, link.wikilink);
+    await this.unlinkRelatedNote(link.docId, autoLinked.noteWikilink);
+
+    autoLinked.links.splice(idx, 1);
+    await ctx.answerCbQuery('Unlinked');
+    if (autoLinked.links.length > 0) {
+      const buttons = autoLinked.links.map((l, i) => [
+        Markup.button.callback(`Unlink ${l.wikilink}`, `unlink_note:${i}`),
+      ]);
+      const linked = autoLinked.links.map((l) => `[[${l.wikilink}]]`).join(', ');
+      await ctx.editMessageText(`Linked to: ${linked}`, Markup.inlineKeyboard(buttons));
+    } else {
+      ctx.session.autoLinkedNotes = undefined;
+      await ctx.editMessageText(`Unlinked [[${link.wikilink}]].`);
     }
   }
 

@@ -87,6 +87,9 @@ export class EmbeddingService implements OnModuleInit {
   private readonly model = 'text-embedding-3-small';
   private readonly rerankModel: string;
   private readonly widePool: number;
+  private readonly autolinkEnabled: boolean;
+  private readonly autolinkThreshold: number;
+  private readonly autolinkMax: number;
   private readonly tagVectorCache = new Map<string, number[]>();
 
   static readonly TAG_SIM_THRESHOLD = TAG_SIM_THRESHOLD;
@@ -102,6 +105,13 @@ export class EmbeddingService implements OnModuleInit {
     });
     this.rerankModel = this.config.get<string>('ai.openai.model', 'gpt-4o-mini');
     this.widePool = this.config.get<number>('ai.ask.widePool', 500);
+    this.autolinkEnabled = this.config.get<boolean>('ai.autolink.enabled', true);
+    this.autolinkThreshold = this.config.get<number>('ai.autolink.threshold', 0.4);
+    this.autolinkMax = this.config.get<number>('ai.autolink.max', 3);
+  }
+
+  get autoLinkEnabled(): boolean {
+    return this.autolinkEnabled;
   }
 
   onModuleInit(): void {
@@ -294,6 +304,37 @@ export class EmbeddingService implements OnModuleInit {
     return [...best.entries()]
       .map(([docId, score]) => ({ docId, score }))
       .sort((a, b) => b.score - a.score);
+  }
+
+  /**
+   * Diary notes most semantically similar to `query`, for auto-linking on save.
+   * Uses dense-only cosine (0..1) — a stable, tunable threshold — not the RRF
+   * fusion of hybrid search (whose fused scores aren't comparable to a fixed
+   * cutoff). Excludes `selfDocId`, restricts to `inbox/` (not contacts/projects,
+   * which have their own linking), dedupes to each note's best chunk.
+   */
+  async findRelated(selfDocId: string, query: string): Promise<Array<{ docId: string; score: number }>> {
+    if (query.trim().length < 20) return [];
+    const vector = await this.embed(query);
+    const hits = await this.qdrant.queryHybrid(vector, { indices: [], values: [] }, this.autolinkMax * 5);
+
+    const best = new Map<string, number>();
+    for (const h of hits) {
+      if (h.id === selfDocId || !h.id.startsWith('inbox/')) continue;
+      const cur = best.get(h.id);
+      if (cur === undefined || h.score > cur) best.set(h.id, h.score);
+    }
+
+    const result = [...best.entries()]
+      .filter(([, score]) => score >= this.autolinkThreshold)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, this.autolinkMax)
+      .map(([docId, score]) => ({ docId, score }));
+
+    this.logger.log(
+      `findRelated ${selfDocId}: ${result.map((r) => `${r.docId}(${r.score.toFixed(2)})`).join(', ') || 'none'}`,
+    );
+    return result;
   }
 
   /**
